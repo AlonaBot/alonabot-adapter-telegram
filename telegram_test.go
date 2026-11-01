@@ -81,6 +81,32 @@ func startRequest(t *testing.T, server *telegramtest.Server) adapter.StartReques
 	return adapter.StartRequest{InstanceID: "test-instance", ConfigJSON: raw}
 }
 
+// accountStartRequest 为账号映射与 mention 验收提供不同的用户名和展示名。
+func accountStartRequest(t *testing.T, server *telegramtest.Server) adapter.StartRequest {
+	t.Helper()
+	target, err := url.Parse(server.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverse := httputil.NewSingleHostReverseProxy(target)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if path.Base(r.URL.Path) == "getMe" {
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`{"ok":true,"result":{"id":42,"is_bot":true,"username":"example_bot","first_name":"Example"}}`)); err != nil {
+				t.Error(err)
+			}
+			return
+		}
+		reverse.ServeHTTP(w, r)
+	}))
+	t.Cleanup(api.Close)
+	raw, err := json.Marshal(map[string]string{"token": "local-secret-token", "api_base_url": api.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return adapter.StartRequest{InstanceID: "test-instance", ConfigJSON: raw}
+}
+
 func waitSaved(t *testing.T, channel <-chan struct{}) {
 	t.Helper()
 	select {
@@ -92,17 +118,16 @@ func waitSaved(t *testing.T, channel <-chan struct{}) {
 
 func TestReceiveLifecycle(t *testing.T) {
 	server := telegramtest.NewServer(t, "local-secret-token")
-	server.SetMe(42, "example_bot")
 	server.Push(json.RawMessage(`{"update_id":10,"message":{"message_id":1,"date":123,"chat":{"id":9,"type":"private"},"text":"hello"}}`), json.RawMessage(`{"update_id":11,"callback_query":{}}`), json.RawMessage(`{"update_id":12,"message":{"message_id":2,"date":124,"chat":{"id":9,"type":"private"},"text":"world"}}`))
 	core := newRecordingCore()
 	a := New()
-	request := startRequest(t, server)
+	request := accountStartRequest(t, server)
 	instance, err := a.Start(context.Background(), request, core)
 	if err != nil {
 		t.Fatal(err)
 	}
 	registerStop(t, instance)
-	if instance.Account().ID != "42" || instance.Account().DisplayName != "example_bot" {
+	if instance.Account().ID != "42" || instance.Account().DisplayName != "Example" || instance.Account().Username != "example_bot" {
 		t.Fatalf("account: %+v", instance.Account())
 	}
 	for range 3 {
@@ -221,7 +246,6 @@ func TestRoundRebuild(t *testing.T) {
 
 func TestMessageMetadata(t *testing.T) {
 	server := telegramtest.NewServer(t, "local-secret-token")
-	server.SetMe(42, "example_bot")
 	messages := []struct {
 		body  string
 		toMe  bool
@@ -230,6 +254,7 @@ func TestMessageMetadata(t *testing.T) {
 		{`"chat":{"id":-9,"type":"private"},"text":"private"`, true, true},
 		{`"chat":{"id":-9,"type":"group"},"text":"reply","reply_to_message":{"from":{"id":42}}`, true, true},
 		{`"chat":{"id":-9,"type":"group"},"text":"😀 @EXAMPLE_BOT","entities":[{"type":"mention","offset":3,"length":12}]`, true, true},
+		{`"chat":{"id":-9,"type":"group"},"text":"@Example","entities":[{"type":"mention","offset":0,"length":8}]`, false, true},
 		{`"chat":{"id":-9,"type":"group"},"text":"bot","entities":[{"type":"text_mention","offset":0,"length":3,"user":{"id":42}}]`, true, true},
 		{`"chat":{"id":-9,"type":"group"},"text":"hello"`, false, true},
 		{`"chat":{"id":-9,"type":"channel"},"text":"anonymous","sender_chat":{"id":-9}`, false, false},
@@ -239,7 +264,7 @@ func TestMessageMetadata(t *testing.T) {
 		server.Push(json.RawMessage(fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"date":123,"from":{"id":7,"username":"reader","language_code":"en-us"},%s}}`, n+1, n+11, c.body)))
 	}
 	core := newRecordingCore()
-	instance, err := New().Start(context.Background(), startRequest(t, server), core)
+	instance, err := New().Start(context.Background(), accountStartRequest(t, server), core)
 	if err != nil {
 		t.Fatal(err)
 	}

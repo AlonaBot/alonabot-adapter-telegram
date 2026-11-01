@@ -246,7 +246,7 @@ func (i *instance) messageEvent(message *telegramMessage, edited bool) (*pb.Even
 			if err != nil {
 				return nil, err
 			}
-			if entity.Type == "mention" && i.account.DisplayName != "" && strings.EqualFold(fragment, "@"+i.account.DisplayName) {
+			if entity.Type == "mention" && i.account.Username != "" && strings.EqualFold(fragment, "@"+i.account.Username) {
 				toMe = true
 			}
 			if entity.Type == "text_mention" && entity.User != nil && entity.User.ID == i.botID {

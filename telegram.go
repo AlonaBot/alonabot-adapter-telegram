@@ -97,8 +97,9 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	}()
 	// 2. 验证账号与 webhook；启动失败时释放实例槽。
 	var me struct {
-		ID       int64  `json:"id"`
-		Username string `json:"username"`
+		ID        int64  `json:"id"`
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
 	}
 	if err := client.call(ctx, "getMe", struct{}{}, &me); err != nil {
 		return nil, startError(err)
@@ -106,7 +107,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	if me.ID == 0 {
 		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNAVAILABLE, Message: "telegram getMe returned no account ID"}
 	}
-	i.account = adapter.Account{ID: strconv.FormatInt(me.ID, 10), DisplayName: me.Username}
+	i.account = adapter.Account{ID: strconv.FormatInt(me.ID, 10), DisplayName: me.FirstName, Username: me.Username}
 	i.botID = me.ID
 	var webhook struct {
 		URL string `json:"url"`
