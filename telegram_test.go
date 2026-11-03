@@ -68,6 +68,10 @@ func (c *recordingCore) ReportFailure(_ context.Context, e *pb.ErrorInfo) error 
 	return nil
 }
 
+func (c *recordingCore) ReadMedia(context.Context, string, uint64, uint32) ([]byte, uint64, bool, error) {
+	return nil, 0, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNSUPPORTED, Message: "outbound media is not configured in this receiving fixture"}
+}
+
 func newRecordingCore() *recordingCore {
 	return &recordingCore{failures: make(chan *pb.ErrorInfo, 8), saved: make(chan struct{}, 16)}
 }

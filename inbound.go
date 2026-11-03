@@ -46,6 +46,12 @@ type telegramMessage struct {
 	Entities        []telegramEntity `json:"entities"`
 	CaptionEntities []telegramEntity `json:"caption_entities"`
 	MediaGroupID    *string          `json:"media_group_id"`
+	Photo           []telegramFile   `json:"photo"`
+	Video           *telegramFile    `json:"video"`
+	Document        *telegramFile    `json:"document"`
+	Animation       *telegramFile    `json:"animation"`
+	Audio           *telegramFile    `json:"audio"`
+	Voice           *telegramFile    `json:"voice"`
 }
 
 type chatMember struct {
@@ -258,6 +264,13 @@ func (i *instance) messageEvent(message *telegramMessage, edited bool) (*pb.Even
 			}
 		}
 		chain.Segments = []*pb.Segment{{Data: &pb.Segment_Text{Text: segment}}}
+	}
+	if media := message.mediaSegment(); media != nil {
+		// caption 随媒体片段交付，避免同时形成重复的文本回复。
+		if message.Text == nil {
+			chain.Segments = nil
+		}
+		chain.Segments = append(chain.Segments, media)
 	}
 	platformID := strconv.FormatInt(message.ID, 10)
 	event.Message = &pb.PlatformMessage{PlatformMessageId: platformID, Chain: chain, MediaGroupId: message.MediaGroupID}

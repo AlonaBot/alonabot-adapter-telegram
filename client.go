@@ -15,9 +15,10 @@ import (
 const defaultAPIBaseURL = "https://api.telegram.org"
 
 type botClient struct {
-	http   *http.Client
-	base   string
-	redact *strings.Replacer
+	http     *http.Client
+	base     string
+	fileBase string
+	redact   *strings.Replacer
 }
 
 type apiError struct {
@@ -57,7 +58,12 @@ func newBotClient(token, base, proxy string) (*botClient, error) {
 	}
 	// 禁止跟随外部重定向，避免 Bot 凭证被传给新的 origin。
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &botClient{http: client, base: strings.TrimRight(base, "/") + "/bot" + url.PathEscape(token) + "/", redact: strings.NewReplacer(replacements...)}, nil
+	base = strings.TrimRight(base, "/")
+	botPath := "bot" + url.PathEscape(token) + "/"
+	return &botClient{
+		http: client, base: base + "/" + botPath, fileBase: base + "/file/" + botPath,
+		redact: strings.NewReplacer(replacements...),
+	}, nil
 }
 
 func (c *botClient) call(ctx context.Context, method string, request any, result any) error {

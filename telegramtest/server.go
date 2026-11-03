@@ -1,7 +1,7 @@
 // Package telegramtest 提供通过真实 HTTP 调用的本地 Telegram Bot API 模拟服务。
 //
 // [NewServer] 创建由测试拥有的 [Server]，支持账号检查、webhook 冲突、long polling
-// 与接收故障注入；调用记录可验证 Adapter 的订阅范围和逐条游标。
+// 与接收故障注入、getFile 和文件下载；调用记录可验证订阅范围和逐条游标。
 package telegramtest
 
 import (
@@ -34,6 +34,7 @@ type Server struct {
 	failures      int
 	changed       chan struct{}
 	closed        bool
+	files         map[string]platformFile
 }
 
 type queuedUpdate struct {
@@ -155,6 +156,10 @@ func (s *Server) AllowedUpdates() [][]string {
 func (s *Server) notify() { close(s.changed); s.changed = make(chan struct{}) }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/file/bot"+s.token+"/") {
+		s.download(w, r)
+		return
+	}
 	prefix := "/bot" + s.token + "/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {
 		s.respond(w, http.StatusUnauthorized, nil)
@@ -174,6 +179,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.respond(w, http.StatusOK, result)
 	case "getUpdates":
 		s.getUpdates(w, r)
+	case "getFile":
+		s.getFile(w, r)
 	default:
 		s.respond(w, http.StatusNotFound, nil)
 	}
