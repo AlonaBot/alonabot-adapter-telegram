@@ -383,19 +383,22 @@ func TestInstanceProxy(t *testing.T) {
 	if err := instance.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// Stop 可能取消一次已被代理记录、却未到达假服务器的长轮询，所以两边计数允许差 1。
+	// 先读服务器计数：代理在转发前记录，服务器已计入的请求此时一定已在代理记录里。
+	serverPolls := len(server.Offsets())
 	mu.Lock()
 	defer mu.Unlock()
 	if len(methods) < 3 || methods[0] != "getMe" || methods[1] != "getWebhookInfo" {
 		t.Fatalf("proxy methods: %v", methods)
 	}
-	polls := 0
+	proxyPolls := 0
 	for _, method := range methods {
 		if method == "getUpdates" {
-			polls++
+			proxyPolls++
 		}
 	}
-	if polls != len(server.Offsets()) {
-		t.Fatalf("proxy polls=%d server polls=%d", polls, len(server.Offsets()))
+	if proxyPolls < serverPolls || proxyPolls > serverPolls+1 {
+		t.Fatalf("proxy polls=%d server polls=%d", proxyPolls, serverPolls)
 	}
 }
 
