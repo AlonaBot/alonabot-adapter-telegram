@@ -289,7 +289,7 @@ func TestMessageMetadata(t *testing.T) {
 		if (e.Actor != nil) != c.actor {
 			t.Errorf("message %d actor=%v", n, e.Actor)
 		}
-		if e.Actor != nil && (e.Actor.GetLocale() != "en-US" || e.Actor.GetExternalUserId() != "7" || e.Actor.GetAdapterInstanceId() != "test-instance" || len(e.Actor.TrustedRoles) != 0) {
+		if e.Actor != nil && (e.Actor.GetLocale() != "en-US" || e.Actor.GetExternalUserId() != "7" || e.Actor.GetAdapterInstanceId() != "test-instance" || len(e.Actor.Permissions) != 0) {
 			t.Errorf("actor: %v", e.Actor)
 		}
 		if e.GetAdapterId() != e.Target.AdapterId || e.GetAdapterInstanceId() != e.Target.AdapterInstanceId || e.GetAccountId() != e.Target.AccountId || e.EventId != "" || e.SourceKind != 0 || len(e.Capabilities) != 0 || e.GetSourceEventId() != strconv.Itoa(n+1) || !json.Valid(e.PlatformPayload) {
