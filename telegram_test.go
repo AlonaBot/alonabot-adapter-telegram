@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +71,18 @@ func (c *recordingCore) ReportFailure(_ context.Context, e *pb.ErrorInfo) error 
 
 func (c *recordingCore) ReadMedia(context.Context, string, uint64, uint32) ([]byte, uint64, bool, error) {
 	return nil, 0, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNSUPPORTED, Message: "outbound media is not configured in this receiving fixture"}
+}
+
+// SetDefault 会同时修改 log 包的输出与标志，清理时一并恢复。
+func setDefaultLogger(t *testing.T, logger *slog.Logger) {
+	t.Helper()
+	previous, writer, flags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(logger)
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+	})
 }
 
 func newRecordingCore() *recordingCore {
@@ -404,9 +417,7 @@ func TestInstanceProxy(t *testing.T) {
 
 func TestCredentialsStayRedacted(t *testing.T) {
 	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	defer slog.SetDefault(previous)
+	setDefaultLogger(t, slog.New(slog.NewTextHandler(&logs, nil)))
 	server := telegramtest.NewServer(t, "local-secret-token")
 	server.Push(json.RawMessage(`{"update_id":1,"message":{"message_id":1,"date":123,"chat":{"id":9,"type":"private"},"text":"hello"}}`))
 	core := newRecordingCore()
