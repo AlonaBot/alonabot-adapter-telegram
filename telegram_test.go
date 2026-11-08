@@ -635,6 +635,82 @@ func TestMalformedUpdateDoesNotBlockFollowingMessage(t *testing.T) {
 	}
 }
 
+func TestPlatformPermissions(t *testing.T) {
+	server := telegramtest.NewServer(t, "local-secret-token")
+	server.SetChatAdministrators(-100, http.StatusOK,
+		json.RawMessage(`{"status":"creator","user":{"id":7,"is_bot":false,"first_name":"Owner"},"is_anonymous":false}`),
+		json.RawMessage(`{"status":"administrator","user":{"id":8,"is_bot":false,"first_name":"Admin"},"is_anonymous":false}`))
+	core := newRecordingCore()
+	running, err := New().Start(context.Background(), startRequest(t, server), core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerStop(t, running)
+	message := func(id, chatID, userID int64, chatType string) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"date":123,"chat":{"id":%d,"type":%q},"from":{"id":%d},"text":"hello"}}`, id, id, chatID, chatType, userID))
+	}
+	checkEvent := func(index int, sourceID, actorID string, permissions []string) {
+		t.Helper()
+		core.mu.Lock()
+		defer core.mu.Unlock()
+		if len(core.events) <= index {
+			t.Fatalf("events=%d, want event %d", len(core.events), index)
+		}
+		event := core.events[index]
+		if event.GetSourceEventId() != sourceID || event.Actor == nil || event.Actor.ExternalUserId != actorID || !reflect.DeepEqual(event.Actor.Permissions, permissions) {
+			t.Fatalf("event %d: source=%q actor=%v, want source=%q actor=%q permissions=%v", index, event.GetSourceEventId(), event.Actor, sourceID, actorID, permissions)
+		}
+	}
+	checkCalls := func(want int) {
+		t.Helper()
+		if got := server.Calls("getChatAdministrators"); got != want {
+			t.Fatalf("getChatAdministrators calls=%d, want %d", got, want)
+		}
+	}
+	server.Push(message(1, -100, 7, "supergroup"), message(2, -100, 8, "supergroup"), message(3, -100, 9, "supergroup"))
+	for range 3 {
+		waitSaved(t, core.saved)
+	}
+	checkEvent(0, "1", "7", []string{"telegram.chat_owner"})
+	checkEvent(1, "2", "8", []string{"telegram.chat_admin"})
+	checkEvent(2, "3", "9", nil)
+	checkCalls(1)
+
+	server.Push(message(4, 7, 7, "private"))
+	waitSaved(t, core.saved)
+	checkEvent(3, "4", "7", nil)
+	checkCalls(1)
+
+	// 成员变更本身和随后消息都使用刷新后的平台列表。
+	server.SetChatAdministrators(-100, http.StatusOK, json.RawMessage(`{"status":"administrator","user":{"id":7}}`))
+	server.Push(json.RawMessage(`{"update_id":5,"chat_member":{"date":123,"chat":{"id":-100,"type":"supergroup"},"from":{"id":7},"old_chat_member":{"status":"left","user":{"id":9}},"new_chat_member":{"status":"member","user":{"id":9}}}}`),
+		message(6, -100, 7, "supergroup"))
+	for range 2 {
+		waitSaved(t, core.saved)
+	}
+	checkEvent(4, "5", "7", []string{"telegram.chat_admin"})
+	checkEvent(5, "6", "7", []string{"telegram.chat_admin"})
+	checkCalls(2)
+
+	// 不产生成员进出事件的权限调整也作废缓存；获取失败仍交付消息。
+	server.SetChatAdministrators(-100, http.StatusInternalServerError)
+	server.Push(json.RawMessage(`{"update_id":7,"chat_member":{"date":123,"chat":{"id":-100,"type":"supergroup"},"from":{"id":7},"old_chat_member":{"status":"member","user":{"id":9}},"new_chat_member":{"status":"administrator","user":{"id":9}}}}`),
+		message(8, -100, 7, "supergroup"))
+	for range 2 {
+		waitSaved(t, core.saved)
+	}
+	checkEvent(6, "8", "7", nil)
+	checkCalls(3)
+	if err := running.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if len(core.events) != 7 || !reflect.DeepEqual(core.offsets, []int64{2, 3, 4, 5, 6, 7, 8, 9}) {
+		t.Fatalf("events=%d offsets=%v", len(core.events), core.offsets)
+	}
+}
+
 func TestInvalidUpdateIDReportsFailure(t *testing.T) {
 	var polls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

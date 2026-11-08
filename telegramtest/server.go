@@ -1,7 +1,7 @@
 // Package telegramtest 提供通过真实 HTTP 调用的本地 Telegram Bot API 模拟服务。
 //
 // [NewServer] 创建由测试拥有的 [Server]，支持账号检查、webhook 冲突、long polling
-// 与接收故障注入、getFile 和文件下载；调用记录可验证订阅范围和逐条游标。
+// 与接收故障注入、getFile、文件下载和 getChatAdministrators；调用记录可验证订阅范围和逐条游标。
 package telegramtest
 
 import (
@@ -19,22 +19,29 @@ import (
 // Server 保存 Bot API 的账号、待接收 update 和请求记录。
 // 所有可变状态由 mu 保护；changed 在更新或关闭时唤醒等待中的 long poll。
 type Server struct {
-	t             testing.TB
-	http          *httptest.Server
-	token         string
-	mu            sync.Mutex
-	userID        int64
-	username      string
-	webhook       string
-	updates       []queuedUpdate
-	offsets       []int64
-	allowed       [][]string
-	subscription  []string
-	failureStatus int
-	failures      int
-	changed       chan struct{}
-	closed        bool
-	files         map[string]platformFile
+	t              testing.TB
+	http           *httptest.Server
+	token          string
+	mu             sync.Mutex
+	userID         int64
+	username       string
+	webhook        string
+	updates        []queuedUpdate
+	offsets        []int64
+	allowed        [][]string
+	subscription   []string
+	failureStatus  int
+	failures       int
+	changed        chan struct{}
+	closed         bool
+	files          map[string]platformFile
+	administrators map[int64]chatAdministrators
+	calls          map[string]int
+}
+
+type chatAdministrators struct {
+	status  int
+	members []json.RawMessage
 }
 
 type queuedUpdate struct {
@@ -46,7 +53,10 @@ type queuedUpdate struct {
 // NewServer 创建测试服务，并在 t.Cleanup 时取消 long poll、关闭 HTTP 服务。
 func NewServer(t testing.TB, token string) *Server {
 	t.Helper()
-	s := &Server{t: t, token: token, userID: 1, username: "test_bot", changed: make(chan struct{})}
+	s := &Server{
+		t: t, token: token, userID: 1, username: "test_bot", changed: make(chan struct{}),
+		administrators: make(map[int64]chatAdministrators), calls: make(map[string]int),
+	}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serveHTTP))
 	t.Cleanup(func() {
 		s.mu.Lock()
@@ -74,6 +84,24 @@ func (s *Server) SetWebhook(url string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.webhook = url
+}
+
+// SetChatAdministrators 复制给定会话的管理员列表；200 返回列表，其他状态返回 Bot API 错误体。
+func (s *Server) SetChatAdministrators(chatID int64, status int, members ...json.RawMessage) {
+	copied := make([]json.RawMessage, len(members))
+	for n, member := range members {
+		copied[n] = slices.Clone(member)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.administrators[chatID] = chatAdministrators{status: status, members: copied}
+}
+
+// Calls 返回给定 Bot API 方法的累计调用次数。
+func (s *Server) Calls(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls[method]
 }
 
 // Push 复制并按 update_id 排序保存 update，唤醒 long poll；非法 JSON 使测试失败。
@@ -166,6 +194,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	method := strings.TrimPrefix(r.URL.Path, prefix)
+	s.mu.Lock()
+	s.calls[method]++
+	s.mu.Unlock()
 	switch method {
 	case "getMe":
 		s.mu.Lock()
@@ -181,9 +212,29 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getUpdates(w, r)
 	case "getFile":
 		s.getFile(w, r)
+	case "getChatAdministrators":
+		s.getChatAdministrators(w, r)
 	default:
 		s.respond(w, http.StatusNotFound, nil)
 	}
+}
+
+func (s *Server) getChatAdministrators(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ChatID int64 `json:"chat_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.respond(w, http.StatusBadRequest, nil)
+		return
+	}
+	s.mu.Lock()
+	administrators, ok := s.administrators[request.ChatID]
+	s.mu.Unlock()
+	if !ok {
+		s.respond(w, http.StatusBadRequest, nil)
+		return
+	}
+	s.respond(w, administrators.status, administrators.members)
 }
 
 func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {

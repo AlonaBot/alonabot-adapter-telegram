@@ -1,4 +1,4 @@
-// Package telegram 实现官方 Telegram Adapter 的账号检查、long polling 接收与媒体取件。
+// Package telegram 实现官方 Telegram Adapter 的账号检查、long polling 接收、平台权限与媒体取件。
 //
 // [New] 创建供 sdk.RunAdapter 使用的 Adapter。每个实例独占 HTTP 客户端和接收循环；
 // Core 持久化逐条游标，实例仅在收到应答后推进内存状态（MESSAGE-MODEL §6.1）。
@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlonaBot/AlonaBot/adapters/telegram/perm"
 	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
@@ -45,9 +46,15 @@ func receiveCapabilities() []*pb.Capability {
 	return []*pb.Capability{{Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
 }
 
-// Descriptor 声明接收能力，不声明发送或平台 extension。
+// Descriptor 声明接收能力与会话平台权限。
 func (*telegramAdapter) Descriptor() *pb.AdapterDescriptor {
-	return &pb.AdapterDescriptor{AdapterId: AdapterID, Capabilities: receiveCapabilities()}
+	return &pb.AdapterDescriptor{
+		AdapterId: AdapterID, Capabilities: receiveCapabilities(),
+		Permissions: []*pb.PermissionDeclaration{
+			{Name: perm.ChatOwner, Implies: []string{perm.ChatAdmin}, LabelKey: "permission.chat_owner"},
+			{Name: perm.ChatAdmin, Implies: []string{"chat_admin"}, LabelKey: "permission.chat_admin"},
+		},
+	}
 }
 
 // Start 验证账号和 webhook 后启动该实例唯一的接收循环。
@@ -75,7 +82,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 			return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "invalid telegram cursor"}
 		}
 	}
-	i := &instance{client: client, core: core, id: request.InstanceID, now: a.now, done: make(chan struct{})}
+	i := &instance{client: client, core: core, id: request.InstanceID, now: a.now, done: make(chan struct{}), administrators: make(map[int64]administratorCache)}
 	a.mu.Lock()
 	_, exists := a.instances[i.id]
 	if !exists {
@@ -149,16 +156,17 @@ type cursor struct {
 
 // instance 的接收状态仅由 receive goroutine 修改；Stop 通过 cancel/done 交接生命周期。
 type instance struct {
-	fileMu  sync.Mutex // 仅保护文件路径缓存的读写。
-	files   map[string]*platformFileLocation
-	client  *botClient
-	core    adapter.Core
-	id      string
-	account adapter.Account
-	botID   int64
-	cancel  context.CancelFunc
-	done    chan struct{}
-	now     func() time.Time
+	fileMu         sync.Mutex // 仅保护文件路径缓存的读写。
+	files          map[string]*platformFileLocation
+	client         *botClient
+	core           adapter.Core
+	id             string
+	account        adapter.Account
+	botID          int64
+	cancel         context.CancelFunc
+	done           chan struct{}
+	now            func() time.Time
+	administrators map[int64]administratorCache // 仅由接收循环拥有，按会话缓存管理员列表。
 }
 
 // Account 返回 getMe 验证过的机器人身份。
@@ -287,6 +295,9 @@ func (i *instance) processUpdate(ctx context.Context, raw json.RawMessage, saved
 	next := saved
 	next.Offset = *update.ID + 1
 	events, err := i.normalize(raw)
+	if err == nil {
+		err = i.addPlatformPermissions(ctx, raw, events)
+	}
 	if err != nil {
 		slog.Warn("skip malformed telegram update", "adapter_instance_id", i.id, "update_id", *update.ID, "error", i.client.safeError(err))
 		events = nil
