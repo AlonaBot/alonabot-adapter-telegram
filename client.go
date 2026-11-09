@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -71,18 +73,55 @@ func (c *botClient) call(ctx context.Context, method string, request any, result
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+method, bytes.NewReader(body))
+	return c.request(ctx, method, "application/json", bytes.NewReader(body), result)
+}
+
+func (c *botClient) multipart(ctx context.Context, method string, params map[string]any, uploads []plannedUpload, files [][]byte, result any) error {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, value := range params {
+		var field string
+		if text, ok := value.(string); ok {
+			field = text
+		} else {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return c.safeError(err)
+			}
+			field = string(encoded)
+		}
+		if err := writer.WriteField(name, field); err != nil {
+			return c.safeError(err)
+		}
+	}
+	for index, upload := range uploads {
+		part, err := writer.CreateFormFile(upload.field, upload.filename)
+		if err != nil {
+			return c.safeError(err)
+		}
+		if _, err := part.Write(files[index]); err != nil {
+			return c.safeError(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return c.safeError(err)
+	}
+	return c.request(ctx, method, writer.FormDataContentType(), &body, result)
+}
+
+func (c *botClient) request(ctx context.Context, method, contentType string, body io.Reader, result any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+method, body)
 	if err != nil {
 		return c.safeError(err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	response, err := c.http.Do(req)
 	if err != nil {
 		return c.safeError(err)
 	}
 	defer response.Body.Close()
 	var envelope struct {
-		OK          bool            `json:"ok"`
+		OK          *bool           `json:"ok"`
 		Result      json.RawMessage `json:"result"`
 		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
@@ -90,20 +129,21 @@ func (c *botClient) call(ctx context.Context, method string, request any, result
 			RetryAfter int64 `json:"retry_after"`
 		} `json:"parameters"`
 	}
-	err = json.NewDecoder(response.Body).Decode(&envelope)
-	if response.StatusCode != http.StatusOK || !envelope.OK {
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return fmt.Errorf("decode telegram response: %w", c.safeError(err))
+	}
+	if envelope.OK == nil {
+		return errors.New("telegram response has no ok field")
+	}
+	if !*envelope.OK {
 		status := response.StatusCode
 		if envelope.ErrorCode != 0 {
 			status = envelope.ErrorCode
 		}
-		description := envelope.Description
-		if err != nil {
-			description = err.Error()
-		}
-		return &apiError{status: status, description: c.redact.Replace(description), retryAfter: time.Duration(envelope.Parameters.RetryAfter) * time.Second}
+		return &apiError{status: status, description: c.redact.Replace(envelope.Description), retryAfter: time.Duration(envelope.Parameters.RetryAfter) * time.Second}
 	}
-	if err != nil {
-		return fmt.Errorf("decode telegram response: %w", c.safeError(err))
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected telegram HTTP status %d", response.StatusCode)
 	}
 	if err := json.Unmarshal(envelope.Result, result); err != nil {
 		return fmt.Errorf("decode telegram result: %w", c.safeError(err))

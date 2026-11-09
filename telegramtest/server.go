@@ -37,6 +37,7 @@ type Server struct {
 	files          map[string]platformFile
 	administrators map[int64]chatAdministrators
 	calls          map[string]int
+	send           sendState // 发送记录、计数和故障同样由 mu 保护。
 }
 
 type chatAdministrators struct {
@@ -212,6 +213,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getUpdates(w, r)
 	case "getFile":
 		s.getFile(w, r)
+	case "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup":
+		s.sendMessage(w, r, method)
 	case "getChatAdministrators":
 		s.getChatAdministrators(w, r)
 	default:

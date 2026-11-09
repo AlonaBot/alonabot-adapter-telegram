@@ -161,9 +161,6 @@ func TestReceiveLifecycle(t *testing.T) {
 	if core.events[0].GetOccurredAtUnixMs() != 123000 || core.events[0].GetTarget().GetAccountId() != "42" {
 		t.Fatal("invalid event identity or date")
 	}
-	if _, safe := instance.Send(context.Background(), nil, nil); safe.Code != pb.ErrorCode_ERROR_CODE_UNSUPPORTED {
-		t.Fatalf("Send error: %v", safe)
-	}
 	server.SetWebhook("https://example.test/hook")
 	_, err = a.Start(context.Background(), request, newRecordingCore())
 	var public *sdk.Error
