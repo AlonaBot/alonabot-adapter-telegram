@@ -1,0 +1,22 @@
+{
+  "$version": 1,
+  "token": {
+    "type": "string",
+    "secret": true,
+    "required": true
+  },
+  "api_base_url": {
+    "type": "string",
+    "default": "https://api.telegram.org"
+  },
+  "proxy_mode": {
+    "type": "string",
+    "options": ["none", "core", "custom"],
+    "default": "none"
+  },
+  "proxy": {
+    "type": "string",
+    "secret": true,
+    "condition": {"proxy_mode": "custom"}
+  }
+}
