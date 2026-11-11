@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Request 保存一次发送类调用的参数和上传文件。
+// Request 保存一次发送或编辑调用的参数和上传文件。
 type Request struct {
 	Method string
 	Params map[string]any // multipart 的 JSON 字段已解码。
@@ -33,7 +33,7 @@ type sendState struct {
 	messageID int64
 }
 
-// Requests 按到达顺序返回发送类请求的深副本。
+// Requests 按到达顺序返回发送与编辑请求的深副本。
 func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,6 +150,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, method stri
 	}
 	count := 1
 	var editID int64
+	editing := method == "editMessageReplyMarkup" || method == "editMessageText"
 	if method == "sendMediaGroup" {
 		media, ok := request.Params["media"].([]any)
 		if !ok || len(media) == 0 {
@@ -158,7 +159,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, method stri
 		}
 		count = len(media)
 	}
-	if method == "editMessageReplyMarkup" {
+	if editing {
 		switch value := request.Params["message_id"].(type) {
 		case float64:
 			editID = int64(value)
@@ -185,7 +186,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, method stri
 		for i := range messages {
 			s.send.messageID++
 			id := s.send.messageID
-			if method == "editMessageReplyMarkup" {
+			if editing {
 				id = editID
 			}
 			if fault.zero {

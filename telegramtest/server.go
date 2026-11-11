@@ -1,7 +1,8 @@
 // Package telegramtest 提供通过真实 HTTP 调用的本地 Telegram Bot API 模拟服务。
 //
 // [NewServer] 创建由测试拥有的 [Server]，支持账号检查、webhook 冲突、long polling
-// 与接收故障注入、getFile、文件下载和 getChatAdministrators；调用记录可验证订阅范围和逐条游标。
+// 与接收故障注入、getFile、文件下载、getChatAdministrators，以及消息发送和编辑；
+// 调用记录可验证订阅范围、逐条游标与出站参数。
 package telegramtest
 
 import (
@@ -37,7 +38,7 @@ type Server struct {
 	files          map[string]platformFile
 	administrators map[int64]chatAdministrators
 	calls          map[string]int
-	send           sendState // 发送记录、计数和故障同样由 mu 保护。
+	send           sendState // 发送与编辑记录、计数和故障同样由 mu 保护。
 }
 
 type chatAdministrators struct {
@@ -213,7 +214,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getUpdates(w, r)
 	case "getFile":
 		s.getFile(w, r)
-	case "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup":
+	case "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup", "editMessageText":
 		s.sendMessage(w, r, method)
 	case "getChatAdministrators":
 		s.getChatAdministrators(w, r)
