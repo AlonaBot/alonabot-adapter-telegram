@@ -41,6 +41,7 @@ type telegramMessage struct {
 	SenderChat      *telegramChat    `json:"sender_chat"`
 	Reply           *telegramMessage `json:"reply_to_message"`
 	ThreadID        *int64           `json:"message_thread_id"`
+	IsTopicMessage  bool             `json:"is_topic_message"`
 	Text            *string          `json:"text"`
 	Caption         *string          `json:"caption"`
 	Entities        []telegramEntity `json:"entities"`
@@ -236,7 +237,7 @@ func (i *instance) messageEvent(message *telegramMessage, edited bool) (*pb.Even
 	if message.SenderChat != nil {
 		event.Actor = nil
 	}
-	if message.ThreadID != nil {
+	if message.IsTopicMessage && message.ThreadID != nil {
 		event.Target.ThreadId = proto.String(strconv.FormatInt(*message.ThreadID, 10))
 	}
 	chain := &pb.MessageChain{}

@@ -56,7 +56,7 @@ func TestIncomingMedia(t *testing.T) {
 	}))
 	t.Cleanup(proxy.Close)
 	core := newRecordingCore()
-	config, err := json.Marshal(map[string]string{"token": "local-secret-token", "api_base_url": "http://telegram.invalid", "proxy": proxy.URL})
+	config, err := json.Marshal(map[string]string{"token": "local-secret-token", "api_base_url": "http://telegram.invalid", "proxy_mode": "custom", "proxy": proxy.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestMediaDownloadRedaction(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client, err := newBotClient(token, server.URL, "")
+			client, err := newBotClient(token, server.URL, proxyModeNone, "")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -16,6 +16,12 @@ import (
 
 const defaultAPIBaseURL = "https://api.telegram.org"
 
+const (
+	proxyModeNone   = "none"
+	proxyModeCore   = "core"
+	proxyModeCustom = "custom"
+)
+
 type botClient struct {
 	http     *http.Client
 	base     string
@@ -33,14 +39,22 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("telegram API status %d: %s", e.status, e.description)
 }
 
-func newBotClient(token, base, proxy string) (*botClient, error) {
+func newBotClient(token, base, proxyMode, proxy string) (*botClient, error) {
 	baseURL, err := url.Parse(base)
 	if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
 		return nil, errors.New("invalid api_base_url")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	replacements := []string{token, "<redacted>", url.PathEscape(token), "<redacted>"}
-	if proxy != "" {
+	switch proxyMode {
+	case proxyModeNone:
+		transport.Proxy = nil
+	case proxyModeCore:
+		transport.Proxy = http.ProxyFromEnvironment
+	case proxyModeCustom:
+		if proxy == "" {
+			return nil, errors.New("invalid proxy")
+		}
 		proxyURL, err := url.Parse(proxy)
 		if err != nil || proxyURL.Host == "" || (proxyURL.Scheme != "http" && proxyURL.Scheme != "https" && proxyURL.Scheme != "socks5") || proxyURL.RawQuery != "" || proxyURL.Fragment != "" {
 			return nil, errors.New("invalid proxy URL")
@@ -55,8 +69,8 @@ func newBotClient(token, base, proxy string) (*botClient, error) {
 			}
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
-	} else {
-		transport.Proxy = http.ProxyFromEnvironment
+	default:
+		return nil, errors.New("invalid proxy_mode")
 	}
 	// 禁止跟随外部重定向，避免 Bot 凭证被传给新的 origin。
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

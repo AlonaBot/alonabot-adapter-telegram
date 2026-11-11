@@ -63,6 +63,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	var config struct {
 		Token      string `json:"token"`
 		APIBaseURL string `json:"api_base_url"`
+		ProxyMode  string `json:"proxy_mode"`
 		Proxy      string `json:"proxy"`
 	}
 	if err := json.Unmarshal(request.ConfigJSON, &config); err != nil || config.Token == "" {
@@ -71,7 +72,10 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	if config.APIBaseURL == "" {
 		config.APIBaseURL = defaultAPIBaseURL
 	}
-	client, err := newBotClient(config.Token, config.APIBaseURL, config.Proxy)
+	if config.ProxyMode == "" {
+		config.ProxyMode = proxyModeNone
+	}
+	client, err := newBotClient(config.Token, config.APIBaseURL, config.ProxyMode, config.Proxy)
 	if err != nil {
 		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: err.Error()}
 	}
