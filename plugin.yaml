@@ -1,0 +1,8 @@
+id: alonabot_adapter_telegram
+name: Telegram
+version: 0.1.0
+author: AlonaBot
+role: adapter
+adapter_id: telegram
+description: Official Telegram Bot API adapter
+source: github.com/AlonaBot/AlonaBot
