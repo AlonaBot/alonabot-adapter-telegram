@@ -15,9 +15,10 @@ import (
 	"time"
 
 	"github.com/AlonaBot/AlonaBot/adapters/telegram/perm"
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 // AdapterID 标识 Telegram 平台。
@@ -42,15 +43,15 @@ func New() adapter.Adapter {
 	return &telegramAdapter{instances: make(map[string]*instance), now: time.Now}
 }
 
-func platformCapabilities() []*pb.Capability {
-	return []*pb.Capability{{Name: "button.clicked", Version: 1, Supported: true}, {Name: "message.send", Version: 1, Supported: true}, {Name: "message.markdown", Version: 1, Supported: true}, {Name: "message.album", Version: 1, Supported: true}, {Name: "message.reference", Version: 1, Supported: true}, {Name: "message.buttons", Version: 1, Supported: true}, {Name: editCapability, Version: 1, Supported: true}, {Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
+func platformCapabilities() []msg.Capability {
+	return []msg.Capability{{Name: "button.clicked", Version: 1, Supported: true}, {Name: "message.send", Version: 1, Supported: true}, {Name: "message.markdown", Version: 1, Supported: true}, {Name: "message.album", Version: 1, Supported: true}, {Name: "message.reference", Version: 1, Supported: true}, {Name: "message.buttons", Version: 1, Supported: true}, {Name: editCapability, Version: 1, Supported: true}, {Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
 }
 
 // Descriptor 声明本 Adapter 的接收、发送、编辑能力与会话平台权限。
-func (*telegramAdapter) Descriptor() *pb.AdapterDescriptor {
-	return &pb.AdapterDescriptor{
-		AdapterId: AdapterID, Capabilities: platformCapabilities(),
-		Permissions: []*pb.PermissionDeclaration{
+func (*telegramAdapter) Descriptor() *adapter.Descriptor {
+	return &adapter.Descriptor{
+		AdapterID: AdapterID, Capabilities: platformCapabilities(),
+		Permissions: []adapter.PermissionDeclaration{
 			{Name: perm.ChatOwner, Implies: []string{perm.ChatAdmin}, LabelKey: "permission.chat_owner"},
 			{Name: perm.ChatAdmin, Implies: []string{"chat_admin"}, LabelKey: "permission.chat_admin"},
 		},
@@ -67,7 +68,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 		Proxy      string `json:"proxy"`
 	}
 	if err := json.Unmarshal(request.ConfigJSON, &config); err != nil || config.Token == "" {
-		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "invalid telegram configuration"}
+		return nil, &sdk.Error{Code: errcode.InvalidArgument, Message: "invalid telegram configuration"}
 	}
 	if config.APIBaseURL == "" {
 		config.APIBaseURL = defaultAPIBaseURL
@@ -77,13 +78,13 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	}
 	client, err := newBotClient(config.Token, config.APIBaseURL, config.ProxyMode, config.Proxy)
 	if err != nil {
-		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: err.Error()}
+		return nil, &sdk.Error{Code: errcode.InvalidArgument, Message: err.Error()}
 	}
 	saved := cursor{RoundStartUnixMS: a.now().UnixMilli()}
 	if len(request.Cursor) > 0 {
 		if err := json.Unmarshal(request.Cursor, &saved); err != nil {
 			client.http.CloseIdleConnections()
-			return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "invalid telegram cursor"}
+			return nil, &sdk.Error{Code: errcode.InvalidArgument, Message: "invalid telegram cursor"}
 		}
 	}
 	i := &instance{client: client, core: core, id: request.InstanceID, now: a.now, done: make(chan struct{}), administrators: make(map[int64]administratorCache)}
@@ -95,7 +96,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	a.mu.Unlock()
 	if exists {
 		client.http.CloseIdleConnections()
-		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_ALREADY_EXISTS, Message: "telegram instance already started"}
+		return nil, &sdk.Error{Code: errcode.AlreadyExists, Message: "telegram instance already started"}
 	}
 	started := false
 	defer func() {
@@ -116,7 +117,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 		return nil, startError(err)
 	}
 	if me.ID == 0 {
-		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNAVAILABLE, Message: "telegram getMe returned no account ID"}
+		return nil, &sdk.Error{Code: errcode.Unavailable, Message: "telegram getMe returned no account ID"}
 	}
 	i.account = adapter.Account{ID: strconv.FormatInt(me.ID, 10), DisplayName: me.FirstName, Username: me.Username}
 	i.botID = me.ID
@@ -127,7 +128,7 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 		return nil, startError(err)
 	}
 	if webhook.URL != "" {
-		return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_FAILED_PRECONDITION, Message: "telegram webhook is already configured"}
+		return nil, &sdk.Error{Code: errcode.FailedPrecondition, Message: "telegram webhook is already configured"}
 	}
 	// 3. Start 的 RPC 结束不取消实例；循环与 Stop 单独拥有其 context。
 	receiveContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -144,10 +145,10 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 }
 
 func startError(err error) error {
-	code := pb.ErrorCode_ERROR_CODE_UNAVAILABLE
+	code := errcode.Unavailable
 	var api *apiError
 	if errors.As(err, &api) && api.status == http.StatusUnauthorized {
-		code = pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED
+		code = errcode.PermissionDenied
 	}
 	return &sdk.Error{Code: code, Message: err.Error()}
 }
@@ -177,7 +178,7 @@ type instance struct {
 func (i *instance) Account() adapter.Account { return i.account }
 
 // Capabilities 返回与 Adapter 描述共用的能力表。
-func (*instance) Capabilities() []*pb.Capability { return platformCapabilities() }
+func (*instance) Capabilities() []msg.Capability { return platformCapabilities() }
 
 // Stop 取消在途请求，等待全部接收回调退出后返回。
 func (i *instance) Stop(_ context.Context) error {
@@ -207,11 +208,11 @@ func (i *instance) receive(ctx context.Context, saved cursor) {
 				if api.status == http.StatusConflict {
 					message = "another getUpdates or webhook owns this bot"
 				}
-				code := pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED
+				code := errcode.PermissionDenied
 				if api.status == http.StatusConflict {
-					code = pb.ErrorCode_ERROR_CODE_FAILED_PRECONDITION
+					code = errcode.FailedPrecondition
 				}
-				if reportErr := i.core.ReportFailure(ctx, &pb.ErrorInfo{Code: code, SafeMessage: message}); reportErr != nil {
+				if reportErr := i.core.ReportFailure(ctx, &errcode.Error{Code: code, Message: message}); reportErr != nil {
 					slog.Error("report telegram failure", "error", i.client.safeError(reportErr))
 				}
 				return
@@ -235,13 +236,13 @@ func (i *instance) receive(ctx context.Context, saved cursor) {
 		if err != nil {
 			if errors.Is(err, errInvalidUpdateID) {
 				slog.Warn("telegram receive failed", "adapter_instance_id", i.id, "error", i.client.safeError(err))
-				if reportErr := i.core.ReportFailure(ctx, &pb.ErrorInfo{Code: pb.ErrorCode_ERROR_CODE_UNAVAILABLE, SafeMessage: errInvalidUpdateID.Error()}); reportErr != nil {
+				if reportErr := i.core.ReportFailure(ctx, &errcode.Error{Code: errcode.Unavailable, Message: errInvalidUpdateID.Error()}); reportErr != nil {
 					slog.Error("report telegram failure", "error", i.client.safeError(reportErr))
 				}
 				return
 			}
 			var public *sdk.Error
-			if errors.As(err, &public) && public.Code == pb.ErrorCode_ERROR_CODE_FAILED_PRECONDITION {
+			if errors.As(err, &public) && public.Code == errcode.FailedPrecondition {
 				return
 			}
 			slog.Warn("telegram receive failed", "adapter_instance_id", i.id, "error", i.client.safeError(err))
@@ -263,7 +264,7 @@ func (i *instance) receive(ctx context.Context, saved cursor) {
 			next := cursor{RoundStartUnixMS: now.UnixMilli()}
 			if err := i.save(ctx, nil, next); err != nil {
 				var public *sdk.Error
-				if errors.As(err, &public) && public.Code == pb.ErrorCode_ERROR_CODE_FAILED_PRECONDITION {
+				if errors.As(err, &public) && public.Code == errcode.FailedPrecondition {
 					return
 				}
 				slog.Warn("save telegram receive round failed", "error", i.client.safeError(err))
@@ -294,7 +295,7 @@ func (i *instance) processUpdate(ctx context.Context, raw json.RawMessage, saved
 	}
 	next := saved
 	next.Offset = *update.ID + 1
-	var events []*pb.Event
+	var events []*msg.Event
 	var err error
 	if len(update.CallbackQuery) > 0 {
 		events, err = i.callback(ctx, update.CallbackQuery, *update.ID, raw)
@@ -332,7 +333,7 @@ func (i *instance) processUpdate(ctx context.Context, raw json.RawMessage, saved
 	return next, nil
 }
 
-func (i *instance) save(ctx context.Context, event *pb.Event, next cursor) error {
+func (i *instance) save(ctx context.Context, event *msg.Event, next cursor) error {
 	encoded, err := json.Marshal(next)
 	if err != nil {
 		return err

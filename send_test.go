@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
-	"google.golang.org/protobuf/proto"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 type sendTestCore struct {
@@ -37,19 +37,15 @@ func (c *sendTestCore) ReadMedia(_ context.Context, token string, offset uint64,
 
 // TestSendPlan 验证真实实例的物理发送顺序、媒体上传、部分回执和预检零副作用。
 func TestSendPlan(t *testing.T) {
-	text := func(value string) *pb.Segment {
-		return &pb.Segment{Data: &pb.Segment_Text{Text: &pb.TextSegment{Text: value}}}
-	}
-	image := func(token string) *pb.Segment {
-		return &pb.Segment{Data: &pb.Segment_Image{Image: &pb.ImageSegment{Source: &pb.MediaSource{Source: &pb.MediaSource_MediaRef{MediaRef: token}}}}}
-	}
-	chain := func() *pb.MessageChain {
-		return &pb.MessageChain{Segments: []*pb.Segment{
-			{Data: &pb.Segment_Reference{Reference: &pb.ReferenceSegment{OriginalPlatformMessageId: "42"}}},
+	text := msg.Text
+	image := func(token string) msg.Segment { return msg.Image(msg.MediaSource{MediaRef: token}) }
+	chain := func() msg.Chain {
+		return msg.Chain{
+			msg.Quote(msg.NewMessageRef("telegram:-123", "42", "")),
 			text("before"), image("photo-a"), image("photo-b"), text("after"),
-			{Data: &pb.Segment_File{File: &pb.FileSegment{Source: &pb.MediaSource{Source: &pb.MediaSource_MediaRef{MediaRef: "document"}}, Filename: proto.String("example.bin")}}},
-			{Data: &pb.Segment_Buttons{Buttons: &pb.ButtonsSegment{Rows: []*pb.ButtonRow{{Buttons: []*pb.Button{{Label: "Open", CoreToken: proto.String("core-token")}}}}}}},
-		}}
+			msg.File(msg.MediaSource{MediaRef: "document"}, "example.bin"),
+			msg.Buttons([]msg.Button{{Label: "Open", CoreToken: "core-token"}}),
+		}
 	}
 	for _, scenario := range []string{"accepted", "second rejected", "first unknown", "long text", "forward", "missing button token", "markdown entities"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -65,33 +61,31 @@ func TestSendPlan(t *testing.T) {
 			}
 			registerStop(t, running)
 			message := chain()
-			expectedCode := pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT
+			expectedCode := errcode.InvalidArgument
 			switch scenario {
 			case "second rejected":
 				server.FailMethod("sendMediaGroup", 1, 400, "bad media")
 			case "first unknown":
 				server.Drop("sendMessage", 1)
 			case "long text":
-				message.Segments = append(message.Segments, text(strings.Repeat("a", 4097)))
+				message = append(message, text(strings.Repeat("a", 4097)))
 			case "forward":
-				message.Segments = append(message.Segments, &pb.Segment{Data: &pb.Segment_Forward{Forward: &pb.ForwardSegment{}}})
-				expectedCode = pb.ErrorCode_ERROR_CODE_UNSUPPORTED
+				message = append(message, msg.ForwardSegment{})
+				expectedCode = errcode.Unsupported
 			case "missing button token":
-				message.Segments[6].GetButtons().Rows[0].Buttons[0].CoreToken = nil
+				message[6].(msg.ButtonsSegment).Rows[0][0].CoreToken = ""
 			case "markdown entities":
-				segment := text("bad")
-				segment.GetText().Format = pb.TextFormat_TEXT_FORMAT_MARKDOWN.Enum()
-				segment.GetText().Entities = []*pb.TextEntity{{Type: pb.EntityType_ENTITY_TYPE_BOLD, LengthUtf16: 3}}
-				message.Segments = append(message.Segments, segment)
+				segment := msg.TextSegment{Text: "bad", Format: msg.FormatMarkdown, Entities: []msg.TextEntity{{Type: msg.EntityBold, LengthUTF16: 3}}}
+				message = append(message, segment)
 			}
-			target := &pb.Target{AdapterId: AdapterID, AdapterInstanceId: "send-instance", AccountId: "1", ChatId: "-123"}
+			target := msg.NewSession(AdapterID, "-123", "")
 			result, safe := running.Send(context.Background(), target, message)
 			requests := server.Requests()
-			if result == nil || !proto.Equal(result.Target, target) {
+			if result == nil || result.Session != target || result.AdapterInstanceID != "send-instance" {
 				t.Fatalf("result target: %v", result)
 			}
 			if scenario != "accepted" && scenario != "second rejected" && scenario != "first unknown" {
-				if safe == nil || safe.Code != expectedCode || result.Status != pb.SendStatus_SEND_STATUS_REJECTED || len(result.PartResults) != 0 || len(requests) != 0 || core.reads != 0 {
+				if safe == nil || safe.Code != expectedCode || result.Status != msg.SendRejected || len(result.PartResults) != 0 || len(requests) != 0 || core.reads != 0 {
 					t.Fatalf("preflight: %v %v requests=%d reads=%d", result, safe, len(requests), core.reads)
 				}
 				return
@@ -121,7 +115,7 @@ func TestSendPlan(t *testing.T) {
 				if !reflect.DeepEqual(New().Descriptor().Capabilities, running.Capabilities()) {
 					t.Fatal("descriptor and instance capabilities differ")
 				}
-				if safe != nil || result.Status != pb.SendStatus_SEND_STATUS_ACCEPTED || !reflect.DeepEqual(result.PlatformMessageIds, []string{"1", "2", "3", "4", "5"}) || result.GetPrimaryPlatformMessageId() != "1" {
+				if safe != nil || result.Status != msg.SendAccepted || !reflect.DeepEqual(result.PlatformMessageIDs, []string{"1", "2", "3", "4", "5"}) || result.PrimaryPlatformMessageID != "1" {
 					t.Fatalf("accepted: %v %v", result, safe)
 				}
 				methods := []string{"sendMessage", "sendMediaGroup", "sendMessage", "sendDocument"}
@@ -129,7 +123,7 @@ func TestSendPlan(t *testing.T) {
 					t.Fatalf("requests: %v", requests)
 				}
 				for index, request := range requests {
-					if request.Method != methods[index] || result.PartResults[index].Status != pb.PartStatus_PART_STATUS_ACCEPTED {
+					if request.Method != methods[index] || result.PartResults[index].Status != msg.PartAccepted {
 						t.Fatalf("operation %d: %v", index, request)
 					}
 				}
@@ -149,28 +143,28 @@ func TestSendPlan(t *testing.T) {
 					t.Fatal("button token missing")
 				}
 				for index, want := range [][]string{{"1"}, {"2", "3"}, {"4"}, {"5"}} {
-					if !reflect.DeepEqual(result.PartResults[index].PlatformMessageIds, want) {
+					if !reflect.DeepEqual(result.PartResults[index].PlatformMessageIDs, want) {
 						t.Fatalf("part IDs: %v", result.PartResults[index])
 					}
 				}
 			case "second rejected":
-				if safe == nil || safe.Code != pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT || result.Status != pb.SendStatus_SEND_STATUS_PARTIAL || len(requests) != 2 || !reflect.DeepEqual(result.PlatformMessageIds, []string{"1"}) {
+				if safe == nil || safe.Code != errcode.InvalidArgument || result.Status != msg.SendPartial || len(requests) != 2 || !reflect.DeepEqual(result.PlatformMessageIDs, []string{"1"}) {
 					t.Fatalf("partial: %v %v", result, safe)
 				}
-				for index, want := range []pb.PartStatus{pb.PartStatus_PART_STATUS_ACCEPTED, pb.PartStatus_PART_STATUS_REJECTED, pb.PartStatus_PART_STATUS_NOT_ATTEMPTED, pb.PartStatus_PART_STATUS_NOT_ATTEMPTED} {
+				for index, want := range []msg.PartStatus{msg.PartAccepted, msg.PartRejected, msg.PartNotAttempted, msg.PartNotAttempted} {
 					if result.PartResults[index].Status != want {
 						t.Fatalf("part status: %v", result.PartResults[index])
 					}
 				}
-				if !proto.Equal(result.PartResults[1].Error, safe) {
+				if !reflect.DeepEqual(result.PartResults[1].Error, safe) {
 					t.Fatal("part error lost")
 				}
 			case "first unknown":
-				if safe == nil || result.Status != pb.SendStatus_SEND_STATUS_UNKNOWN || len(requests) != 1 || core.reads != 0 || len(result.PlatformMessageIds) != 0 || result.PartResults[0].Status != pb.PartStatus_PART_STATUS_UNKNOWN {
+				if safe == nil || result.Status != msg.SendUnknown || len(requests) != 1 || core.reads != 0 || len(result.PlatformMessageIDs) != 0 || result.PartResults[0].Status != msg.PartUnknown {
 					t.Fatalf("unknown: %v %v", result, safe)
 				}
 				for _, part := range result.PartResults[1:] {
-					if part.Status != pb.PartStatus_PART_STATUS_NOT_ATTEMPTED {
+					if part.Status != msg.PartNotAttempted {
 						t.Fatalf("unexpected attempt: %v", part)
 					}
 				}

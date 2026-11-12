@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
-	"google.golang.org/protobuf/proto"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 type telegramUser struct {
@@ -106,7 +106,7 @@ type reactionUpdate struct {
 	New       []telegramReaction `json:"new_reaction"`
 }
 
-func (i *instance) normalize(raw json.RawMessage) ([]*pb.Event, error) {
+func (i *instance) normalize(raw json.RawMessage) ([]*msg.Event, error) {
 	var update struct {
 		ID                int64             `json:"update_id"`
 		Message           *telegramMessage  `json:"message"`
@@ -121,26 +121,26 @@ func (i *instance) normalize(raw json.RawMessage) ([]*pb.Event, error) {
 		return nil, err
 	}
 	// 1. 一个 Telegram Message 保持一个事件，不聚合相册。
-	message := update.Message
-	if message == nil {
-		message = update.ChannelPost
+	received := update.Message
+	if received == nil {
+		received = update.ChannelPost
 	}
 	edited := false
-	if message == nil {
-		message = update.EditedMessage
-		edited = message != nil
+	if received == nil {
+		received = update.EditedMessage
+		edited = received != nil
 	}
-	if message == nil {
-		message = update.EditedChannelPost
-		edited = message != nil
+	if received == nil {
+		received = update.EditedChannelPost
+		edited = received != nil
 	}
-	if message != nil {
-		event, err := i.messageEvent(message, edited)
+	if received != nil {
+		event, err := i.messageEvent(received, edited)
 		if err != nil {
 			return nil, err
 		}
 		i.source(event, update.ID, raw)
-		return []*pb.Event{event}, nil
+		return []*msg.Event{event}, nil
 	}
 	// 2. 成员事件的 Actor 来自操作人，payload 来自被操作成员。
 	member := update.MyChatMember
@@ -152,19 +152,19 @@ func (i *instance) normalize(raw json.RawMessage) ([]*pb.Event, error) {
 			return nil, nil
 		}
 		event := i.baseEvent(member.Chat, member.Date, member.From)
-		payload := &pb.MemberPayload{MemberExternalUserId: strconv.FormatInt(member.New.User.ID, 10)}
+		payload := &msg.MemberPayload{MemberExternalUserID: strconv.FormatInt(member.New.User.ID, 10)}
 		if member.New.present() {
-			event.EventType = "member.joined"
-			event.EventPayload = &pb.EventPayload{Kind: &pb.EventPayload_MemberJoined{MemberJoined: payload}}
+			event.Type = "member.joined"
+			event.Payload = payload
 		} else {
-			event.EventType = "member.left"
-			event.EventPayload = &pb.EventPayload{Kind: &pb.EventPayload_MemberLeft{MemberLeft: payload}}
+			event.Type = "member.left"
+			event.Payload = payload
 		}
 		i.source(event, update.ID, raw)
-		return []*pb.Event{event}, nil
+		return []*msg.Event{event}, nil
 	}
 	// 3. 同一个 reaction update 可以新增多项，每项形成一个 reaction.added。
-	var events []*pb.Event
+	var events []*msg.Event
 	if reaction := update.Reaction; reaction != nil {
 		old := make(map[telegramReaction]bool, len(reaction.Old))
 		for _, r := range reaction.Old {
@@ -175,8 +175,8 @@ func (i *instance) normalize(raw json.RawMessage) ([]*pb.Event, error) {
 				continue
 			}
 			event := i.baseEvent(reaction.Chat, reaction.Date, reaction.User)
-			event.EventType = "reaction.added"
-			event.EventPayload = &pb.EventPayload{Kind: &pb.EventPayload_ReactionAdded{ReactionAdded: &pb.ReactionAddedPayload{PlatformMessageId: strconv.FormatInt(reaction.MessageID, 10), Reaction: r.text()}}}
+			event.Type = "reaction.added"
+			event.Payload = &msg.ReactionAddedPayload{PlatformMessageID: strconv.FormatInt(reaction.MessageID, 10), Reaction: r.text()}
 			i.source(event, update.ID, raw)
 			events = append(events, event)
 		}
@@ -184,16 +184,20 @@ func (i *instance) normalize(raw json.RawMessage) ([]*pb.Event, error) {
 	return events, nil
 }
 
-func (i *instance) baseEvent(chat telegramChat, date int64, user *telegramUser) *pb.Event {
-	return &pb.Event{AdapterId: proto.String(AdapterID), AdapterInstanceId: proto.String(i.id), AccountId: proto.String(i.account.ID), Target: &pb.Target{AdapterId: AdapterID, AdapterInstanceId: i.id, AccountId: i.account.ID, ChatId: strconv.FormatInt(chat.ID, 10)}, OccurredAtUnixMs: date * 1000, Actor: i.actor(user)}
+func (i *instance) baseEvent(chat telegramChat, date int64, user *telegramUser) *msg.Event {
+	var occurred time.Time
+	if date != 0 {
+		occurred = time.Unix(date, 0)
+	}
+	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.NewSession(AdapterID, strconv.FormatInt(chat.ID, 10), ""), OccurredAt: occurred, Actor: i.actor(user)}
 }
 
-func (*instance) source(event *pb.Event, id int64, raw json.RawMessage) {
-	event.SourceEventId = proto.String(strconv.FormatInt(id, 10))
+func (*instance) source(event *msg.Event, id int64, raw json.RawMessage) {
+	event.SourceEventID = strconv.FormatInt(id, 10)
 	event.PlatformPayload = raw
 }
 
-func (i *instance) actor(user *telegramUser) *pb.Actor {
+func (i *instance) actor(user *telegramUser) *msg.Actor {
 	if user == nil {
 		return nil
 	}
@@ -201,12 +205,12 @@ func (i *instance) actor(user *telegramUser) *pb.Actor {
 	if name == "" {
 		name = strings.TrimSpace(user.FirstName + " " + user.LastName)
 	}
-	actor := &pb.Actor{ExternalUserId: strconv.FormatInt(user.ID, 10), AdapterInstanceId: i.id}
+	actor := &msg.Actor{ExternalUserID: strconv.FormatInt(user.ID, 10), AdapterInstanceID: i.id}
 	if name != "" {
-		actor.DisplayName = &name
+		actor.DisplayName = name
 	}
 	if user.LanguageCode != nil {
-		actor.Locale = proto.String(localeCase(*user.LanguageCode))
+		actor.Locale = localeCase(*user.LanguageCode)
 	}
 	return actor
 }
@@ -232,22 +236,22 @@ func localeCase(tag string) string {
 	return strings.Join(parts, "-")
 }
 
-func (i *instance) messageEvent(message *telegramMessage, edited bool) (*pb.Event, error) {
-	event := i.baseEvent(message.Chat, message.Date, message.From)
-	if message.SenderChat != nil {
+func (i *instance) messageEvent(received *telegramMessage, edited bool) (*msg.Event, error) {
+	event := i.baseEvent(received.Chat, received.Date, received.From)
+	if received.SenderChat != nil {
 		event.Actor = nil
 	}
-	if message.IsTopicMessage && message.ThreadID != nil {
-		event.Target.ThreadId = proto.String(strconv.FormatInt(*message.ThreadID, 10))
+	if received.IsTopicMessage && received.ThreadID != nil {
+		event.Session = msg.NewSession(AdapterID, strconv.FormatInt(received.Chat.ID, 10), strconv.FormatInt(*received.ThreadID, 10))
 	}
-	chain := &pb.MessageChain{}
-	text, entities := message.Text, message.Entities
+	chain := msg.Chain{}
+	text, entities := received.Text, received.Entities
 	if text == nil {
-		text, entities = message.Caption, message.CaptionEntities
+		text, entities = received.Caption, received.CaptionEntities
 	}
-	toMe := message.Chat.Type == "private" || (message.Reply != nil && message.Reply.From != nil && message.Reply.From.ID == i.botID)
+	toMe := received.Chat.Type == "private" || (received.Reply != nil && received.Reply.From != nil && received.Reply.From.ID == i.botID)
 	if text != nil {
-		segment := &pb.TextSegment{Text: *text}
+		segment := msg.TextSegment{Text: *text}
 		for _, entity := range entities {
 			fragment, err := entityText(*text, entity.Offset, entity.Length)
 			if err != nil {
@@ -261,26 +265,26 @@ func (i *instance) messageEvent(message *telegramMessage, edited bool) (*pb.Even
 			}
 			mapped := mapEntity(entity)
 			if mapped != nil {
-				segment.Entities = append(segment.Entities, mapped)
+				segment.Entities = append(segment.Entities, *mapped)
 			}
 		}
-		chain.Segments = []*pb.Segment{{Data: &pb.Segment_Text{Text: segment}}}
+		chain = msg.Chain{segment}
 	}
-	if media := message.mediaSegment(); media != nil {
+	if media := received.mediaSegment(); media != nil {
 		// caption 随媒体片段交付，避免同时形成重复的文本回复。
-		if message.Text == nil {
-			chain.Segments = nil
+		if received.Text == nil {
+			chain = nil
 		}
-		chain.Segments = append(chain.Segments, media)
+		chain = append(chain, media)
 	}
-	platformID := strconv.FormatInt(message.ID, 10)
-	event.Message = &pb.PlatformMessage{PlatformMessageId: platformID, Chain: chain, MediaGroupId: message.MediaGroupID}
+	platformID := strconv.FormatInt(received.ID, 10)
+	event.Message = &msg.PlatformMessage{PlatformMessageID: platformID, Chain: chain, MediaGroupID: deref(received.MediaGroupID)}
 	if edited {
-		event.EventType = "message.edited"
-		event.EventPayload = &pb.EventPayload{Kind: &pb.EventPayload_MessageEdited{MessageEdited: &pb.MessageEditedPayload{PlatformMessageId: platformID, Chain: chain}}}
+		event.Type = "message.edited"
+		event.Payload = &msg.EditedPayload{PlatformMessageID: platformID, Chain: chain}
 	} else {
-		event.EventType = "message.created"
-		event.EventPayload = &pb.EventPayload{Kind: &pb.EventPayload_MessageCreated{MessageCreated: &pb.MessageCreatedPayload{PlatformMessageId: platformID, Chain: chain, ToMe: toMe}}}
+		event.Type = "message.created"
+		event.Payload = &msg.CreatedPayload{PlatformMessageID: platformID, Chain: chain, ToMe: toMe}
 	}
 	return event, nil
 }
@@ -298,17 +302,25 @@ func entityText(text string, offset, length int) (string, error) {
 	return string(utf16.Decode(units[offset:end])), nil
 }
 
-var entityTypes = map[string]pb.EntityType{"bold": pb.EntityType_ENTITY_TYPE_BOLD, "italic": pb.EntityType_ENTITY_TYPE_ITALIC, "underline": pb.EntityType_ENTITY_TYPE_UNDERLINE, "strikethrough": pb.EntityType_ENTITY_TYPE_STRIKETHROUGH, "spoiler": pb.EntityType_ENTITY_TYPE_SPOILER, "code": pb.EntityType_ENTITY_TYPE_CODE, "pre": pb.EntityType_ENTITY_TYPE_PRE, "text_link": pb.EntityType_ENTITY_TYPE_TEXT_LINK, "text_mention": pb.EntityType_ENTITY_TYPE_TEXT_MENTION}
+var entityTypes = map[string]msg.EntityType{"bold": msg.EntityBold, "italic": msg.EntityItalic, "underline": msg.EntityUnderline, "strikethrough": msg.EntityStrikethrough, "spoiler": msg.EntitySpoiler, "code": msg.EntityCode, "pre": msg.EntityPre, "text_link": msg.EntityTextLink, "text_mention": msg.EntityTextMention}
 
-func mapEntity(entity telegramEntity) *pb.TextEntity {
+func mapEntity(entity telegramEntity) *msg.TextEntity {
 	kind, ok := entityTypes[entity.Type]
 	// mention、bot_command 等保持普通文本，平台特有元数据仍在原始 update 中。
 	if !ok {
 		return nil
 	}
-	result := &pb.TextEntity{Type: kind, OffsetUtf16: uint32(entity.Offset), LengthUtf16: uint32(entity.Length), Url: entity.URL, Language: entity.Language}
+	result := &msg.TextEntity{Type: kind, OffsetUTF16: uint32(entity.Offset), LengthUTF16: uint32(entity.Length), URL: deref(entity.URL), Language: deref(entity.Language)}
 	if entity.User != nil {
-		result.ExternalUserId = proto.String(strconv.FormatInt(entity.User.ID, 10))
+		result.ExternalUserID = strconv.FormatInt(entity.User.ID, 10)
 	}
 	return result
+}
+
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }

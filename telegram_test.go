@@ -22,23 +22,24 @@ import (
 	"time"
 
 	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 type recordingCore struct {
 	mu       sync.Mutex
 	offsets  []int64
 	cursors  []cursor
-	events   []*pb.Event
-	failures chan *pb.ErrorInfo
+	events   []*msg.Event
+	failures chan *errcode.Error
 	saved    chan struct{}
 	onSave   func(cursor)
-	deliver  func(context.Context, *pb.Event, []byte) (bool, error)
+	deliver  func(context.Context, *msg.Event, []byte) (bool, error)
 }
 
-func (c *recordingCore) Deliver(ctx context.Context, event *pb.Event, raw []byte) (bool, error) {
+func (c *recordingCore) Deliver(ctx context.Context, event *msg.Event, raw []byte) (bool, error) {
 	if c.deliver != nil {
 		return c.deliver(ctx, event, raw)
 	}
@@ -64,13 +65,13 @@ func (c *recordingCore) SaveCursor(_ context.Context, raw []byte) error {
 	return nil
 }
 
-func (c *recordingCore) ReportFailure(_ context.Context, e *pb.ErrorInfo) error {
+func (c *recordingCore) ReportFailure(_ context.Context, e *errcode.Error) error {
 	c.failures <- e
 	return nil
 }
 
 func (c *recordingCore) ReadMedia(context.Context, string, uint64, uint32) ([]byte, uint64, bool, error) {
-	return nil, 0, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNSUPPORTED, Message: "outbound media is not configured in this receiving fixture"}
+	return nil, 0, false, &sdk.Error{Code: errcode.Unsupported, Message: "outbound media is not configured in this receiving fixture"}
 }
 
 // SetDefault 会同时修改 log 包的输出与标志，清理时一并恢复。
@@ -86,7 +87,7 @@ func setDefaultLogger(t *testing.T, logger *slog.Logger) {
 }
 
 func newRecordingCore() *recordingCore {
-	return &recordingCore{failures: make(chan *pb.ErrorInfo, 8), saved: make(chan struct{}, 16)}
+	return &recordingCore{failures: make(chan *errcode.Error, 8), saved: make(chan struct{}, 16)}
 }
 
 func startRequest(t *testing.T, server *telegramtest.Server) adapter.StartRequest {
@@ -158,13 +159,13 @@ func TestReceiveLifecycle(t *testing.T) {
 	if len(core.events) != 2 || len(core.offsets) != 3 || core.offsets[0] != 11 || core.offsets[1] != 12 || core.offsets[2] != 13 {
 		t.Fatalf("events=%d offsets=%v", len(core.events), core.offsets)
 	}
-	if core.events[0].GetOccurredAtUnixMs() != 123000 || core.events[0].GetTarget().GetAccountId() != "42" {
+	if core.events[0].OccurredAt.UnixMilli() != 123000 || core.events[0].AccountID != "42" {
 		t.Fatal("invalid event identity or date")
 	}
 	server.SetWebhook("https://example.test/hook")
 	_, err = a.Start(context.Background(), request, newRecordingCore())
 	var public *sdk.Error
-	if !errors.As(err, &public) || public.Code != pb.ErrorCode_ERROR_CODE_FAILED_PRECONDITION {
+	if !errors.As(err, &public) || public.Code != errcode.FailedPrecondition {
 		t.Fatalf("webhook error: %v", err)
 	}
 }
@@ -199,7 +200,7 @@ func TestFatalAndRetry(t *testing.T) {
 					if status == 409 {
 						want = "another getUpdates or webhook owns this bot"
 					}
-					if failure.SafeMessage != want {
+					if failure.Message != want {
 						t.Fatalf("safe failure: %v", failure)
 					}
 				case <-time.After(time.Second):
@@ -294,25 +295,25 @@ func TestMessageMetadata(t *testing.T) {
 	defer core.mu.Unlock()
 	for n, c := range messages {
 		e := core.events[n]
-		if got := e.GetEventPayload().GetMessageCreated().GetToMe(); got != c.toMe {
+		if got := e.Payload.(*msg.CreatedPayload).ToMe; got != c.toMe {
 			t.Errorf("message %d to_me=%v", n, got)
 		}
 		if (e.Actor != nil) != c.actor {
 			t.Errorf("message %d actor=%v", n, e.Actor)
 		}
-		if e.Actor != nil && (e.Actor.GetLocale() != "en-US" || e.Actor.GetExternalUserId() != "7" || e.Actor.GetAdapterInstanceId() != "test-instance" || len(e.Actor.Permissions) != 0) {
+		if e.Actor != nil && (e.Actor.Locale != "en-US" || e.Actor.ExternalUserID != "7" || e.Actor.AdapterInstanceID != "test-instance" || len(e.Actor.Permissions) != 0) {
 			t.Errorf("actor: %v", e.Actor)
 		}
-		if e.GetAdapterId() != e.Target.AdapterId || e.GetAdapterInstanceId() != e.Target.AdapterInstanceId || e.GetAccountId() != e.Target.AccountId || e.EventId != "" || e.SourceKind != 0 || len(e.Capabilities) != 0 || e.GetSourceEventId() != strconv.Itoa(n+1) || !json.Valid(e.PlatformPayload) {
+		if e.AdapterID != AdapterID || e.AdapterInstanceID != "test-instance" || e.AccountID != "42" || (e.Session != "telegram:-9" && e.Session != "telegram:-9#77") || e.ID != "" || e.Source != 0 || len(e.Capabilities) != 0 || e.SourceEventID != strconv.Itoa(n+1) || !json.Valid(e.PlatformPayload) {
 			t.Errorf("event identity: %v", e)
 		}
 	}
 	album := core.events[len(messages)-2]
-	entity := album.Message.Chain.Segments[0].GetText().Entities[0]
-	if album.Message.GetMediaGroupId() != "album" || album.Target.GetThreadId() != "77" || entity.OffsetUtf16 != 3 || entity.LengthUtf16 != 4 || entity.Type != pb.EntityType_ENTITY_TYPE_BOLD {
+	entity := album.Message.Chain[0].(msg.TextSegment).Entities[0]
+	if album.Message.MediaGroupID != "album" || album.Session != "telegram:-9#77" || entity.OffsetUTF16 != 3 || entity.LengthUTF16 != 4 || entity.Type != msg.EntityBold {
 		t.Fatalf("album or entity: %v", album)
 	}
-	if target := core.events[len(messages)-1].Target; target.ThreadId != nil {
+	if target := core.events[len(messages)-1].Session; target != "telegram:-9" {
 		t.Fatalf("reply thread target = %v, want no thread_id", target)
 	}
 }
@@ -442,7 +443,7 @@ func TestDirectProxyModeIgnoresEnvironment(t *testing.T) {
 		registerStop(t, inst)
 	}
 	var public *sdk.Error
-	if !errors.As(err, &public) || public.Code != pb.ErrorCode_ERROR_CODE_UNAVAILABLE {
+	if !errors.As(err, &public) || public.Code != errcode.Unavailable {
 		t.Fatalf("Start error = %v, want UNAVAILABLE", err)
 	}
 	if got := requests.Load(); got != 0 {
@@ -457,7 +458,7 @@ func TestCredentialsStayRedacted(t *testing.T) {
 	server.Push(json.RawMessage(`{"update_id":1,"message":{"message_id":1,"date":123,"chat":{"id":9,"type":"private"},"text":"hello"}}`))
 	core := newRecordingCore()
 	var attempts atomic.Int64
-	core.deliver = func(ctx context.Context, e *pb.Event, raw []byte) (bool, error) {
+	core.deliver = func(ctx context.Context, e *msg.Event, raw []byte) (bool, error) {
 		if attempts.Add(1) == 1 {
 			return false, fmt.Errorf("failed URL %s/botlocal-secret-token/getUpdates", server.URL())
 		}
@@ -497,7 +498,7 @@ func TestSequentialAcknowledgements(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int64
-	core.deliver = func(ctx context.Context, e *pb.Event, raw []byte) (bool, error) {
+	core.deliver = func(ctx context.Context, e *msg.Event, raw []byte) (bool, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			select {
@@ -563,16 +564,16 @@ func TestNonMessageEvents(t *testing.T) {
 	defer core.mu.Unlock()
 	for n, want := range []string{"message.created", "message.edited", "message.edited", "member.joined", "member.left", "reaction.added"} {
 		e := core.events[n]
-		if e.EventType != want || e.GetOccurredAtUnixMs() != int64(100+n)*1000 {
+		if e.Type != want || e.OccurredAt.UnixMilli() != int64(100+n)*1000 {
 			t.Errorf("event %d: %v", n, e)
 		}
 		if n == 1 || n == 2 {
-			if e.GetEventPayload().GetMessageEdited().OldChain != nil {
+			if e.Payload.(*msg.EditedPayload).OldChain != nil {
 				t.Fatal("fabricated old chain")
 			}
 		}
 	}
-	if core.events[3].Actor.ExternalUserId != "7" || core.events[3].GetEventPayload().GetMemberJoined().MemberExternalUserId != "42" || core.events[5].GetEventPayload().GetReactionAdded().Reaction != "❤" {
+	if core.events[3].Actor.ExternalUserID != "7" || core.events[3].Payload.(*msg.MemberPayload).MemberExternalUserID != "42" || core.events[5].Payload.(*msg.ReactionAddedPayload).Reaction != "❤" {
 		t.Fatalf("member/reaction payloads: %v", core.events)
 	}
 }
@@ -592,7 +593,7 @@ func TestReactionCursorSurvivesRestart(t *testing.T) {
 	core := newRecordingCore()
 	second := make(chan struct{})
 	var calls atomic.Int64
-	core.deliver = func(ctx context.Context, e *pb.Event, raw []byte) (bool, error) {
+	core.deliver = func(ctx context.Context, e *msg.Event, raw []byte) (bool, error) {
 		if calls.Add(1) == 2 {
 			close(second)
 			<-ctx.Done()
@@ -635,7 +636,7 @@ func TestReactionCursorSurvivesRestart(t *testing.T) {
 	}
 	restarted.mu.Lock()
 	defer restarted.mu.Unlock()
-	if len(restarted.events) != 2 || restarted.events[0].GetEventPayload().GetReactionAdded().Reaction != "👍" || restarted.events[1].GetEventPayload().GetReactionAdded().Reaction != "❤" || restarted.offsets[0] != 0 || restarted.offsets[1] != 11 {
+	if len(restarted.events) != 2 || restarted.events[0].Payload.(*msg.ReactionAddedPayload).Reaction != "👍" || restarted.events[1].Payload.(*msg.ReactionAddedPayload).Reaction != "❤" || restarted.offsets[0] != 0 || restarted.offsets[1] != 11 {
 		t.Fatalf("restarted reactions=%v cursors=%v", restarted.events, restarted.offsets)
 	}
 }
@@ -663,7 +664,7 @@ func TestMalformedUpdateDoesNotBlockFollowingMessage(t *testing.T) {
 			}
 			core.mu.Lock()
 			defer core.mu.Unlock()
-			if len(core.events) != 1 || core.events[0].GetSourceEventId() != "11" || !reflect.DeepEqual(core.offsets, []int64{11, 12}) {
+			if len(core.events) != 1 || core.events[0].SourceEventID != "11" || !reflect.DeepEqual(core.offsets, []int64{11, 12}) {
 				t.Fatalf("events=%v offsets=%v", core.events, core.offsets)
 			}
 		})
@@ -692,8 +693,8 @@ func TestPlatformPermissions(t *testing.T) {
 			t.Fatalf("events=%d, want event %d", len(core.events), index)
 		}
 		event := core.events[index]
-		if event.GetSourceEventId() != sourceID || event.Actor == nil || event.Actor.ExternalUserId != actorID || !reflect.DeepEqual(event.Actor.Permissions, permissions) {
-			t.Fatalf("event %d: source=%q actor=%v, want source=%q actor=%q permissions=%v", index, event.GetSourceEventId(), event.Actor, sourceID, actorID, permissions)
+		if event.SourceEventID != sourceID || event.Actor == nil || event.Actor.ExternalUserID != actorID || !reflect.DeepEqual(event.Actor.Permissions, permissions) {
+			t.Fatalf("event %d: source=%q actor=%v, want source=%q actor=%q permissions=%v", index, event.SourceEventID, event.Actor, sourceID, actorID, permissions)
 		}
 	}
 	checkCalls := func(want int) {
@@ -779,7 +780,7 @@ func TestInvalidUpdateIDReportsFailure(t *testing.T) {
 	registerStop(t, running)
 	select {
 	case failure := <-core.failures:
-		if failure.SafeMessage != "telegram update has no valid update_id" {
+		if failure.Message != "telegram update has no valid update_id" {
 			t.Fatalf("failure: %v", failure)
 		}
 	case <-time.After(5 * time.Second):

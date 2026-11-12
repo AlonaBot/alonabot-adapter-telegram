@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 const maxAlbumMedia = 10 // MESSAGE-MODEL §6.2：连续图片、视频每组最多十项。
@@ -29,64 +30,67 @@ type sendPlan struct {
 	operations []sendOperation
 }
 
-func buildSendPlan(target *pb.Target, chain *pb.MessageChain) (*sendPlan, *pb.ErrorInfo) {
+func buildSendPlan(to msg.Session, chain msg.Chain) (*sendPlan, *errcode.Error) {
 	// 1. 校验目标和全部片段；计划阶段不读取媒体或调用平台。
-	chatID, ok := decimalID(target.GetChatId())
-	if !ok {
+	_, chat, thread, valid := to.Parts()
+	chatID, ok := decimalID(chat)
+	if !valid || !ok {
 		return nil, invalidPlan("telegram target requires a decimal chat_id")
 	}
 	common := map[string]any{"chat_id": chatID}
-	if target.ThreadId != nil {
-		threadID, ok := decimalID(target.GetThreadId())
+	if thread != "" {
+		threadID, ok := decimalID(thread)
 		if !ok {
 			return nil, invalidPlan("telegram target requires a decimal thread_id")
 		}
 		common["message_thread_id"] = threadID
 	}
 	plan := &sendPlan{}
-	var content []*pb.Segment
+	var content msg.Chain
 	var indexes []uint32
 	referenceIndex, buttonsIndex := -1, -1
 	var reply, markup map[string]any
-	for index, segment := range chain.GetSegments() {
+	for index, segment := range chain {
 		if segment == nil {
 			return nil, invalidPlan("missing message segment")
 		}
-		switch data := segment.Data.(type) {
-		case *pb.Segment_Reference:
-			if referenceIndex >= 0 || data.Reference == nil {
+		switch data := segment.(type) {
+		case msg.ReferenceSegment:
+			if referenceIndex >= 0 {
 				return nil, invalidPlan("chain requires at most one reference")
 			}
 			referenceIndex = index
-			id, ok := decimalID(data.Reference.OriginalPlatformMessageId)
-			if !ok {
+			other, messageID, _, valid := data.Ref.Parts()
+			id, ok := decimalID(messageID)
+			if !valid || !ok {
 				return nil, invalidPlan("reference requires a decimal message ID")
 			}
-			if other := data.Reference.Target; other != nil {
-				otherID, ok := decimalID(other.ChatId)
+			if other != "" {
+				_, otherChat, _, _ := other.Parts()
+				otherID, ok := decimalID(otherChat)
 				if !ok {
 					return nil, invalidPlan("reference requires a decimal chat_id")
 				}
 				if otherID != chatID {
-					return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "cross-chat replies are unsupported")
+					return nil, planError(errcode.Unsupported, "cross-chat replies are unsupported")
 				}
 			}
 			reply = map[string]any{"message_id": id}
-		case *pb.Segment_Buttons:
+		case msg.ButtonsSegment:
 			if buttonsIndex >= 0 {
 				return nil, invalidPlan("chain requires at most one buttons segment")
 			}
 			buttonsIndex = index
-			var err *pb.ErrorInfo
-			markup, err = renderButtons(data.Buttons)
+			var err *errcode.Error
+			markup, err = renderButtons(data)
 			if err != nil {
 				return nil, err
 			}
-		case *pb.Segment_Text, *pb.Segment_Mention, *pb.Segment_Image, *pb.Segment_Video, *pb.Segment_File:
+		case msg.TextSegment, msg.MentionSegment, msg.ImageSegment, msg.VideoSegment, msg.FileSegment:
 			content = append(content, segment)
 			indexes = append(indexes, uint32(index))
-		case *pb.Segment_Forward:
-			return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "telegram forward segments are unsupported")
+		case msg.ForwardSegment:
+			return nil, planError(errcode.Unsupported, "telegram forward segments are unsupported")
 		default:
 			return nil, invalidPlan("missing message segment data")
 		}
@@ -99,8 +103,8 @@ func buildSendPlan(target *pb.Target, chain *pb.MessageChain) (*sendPlan, *pb.Er
 		end := start + 1
 		operation := sendOperation{params: make(map[string]any)}
 		switch {
-		case content[start].GetText() != nil || content[start].GetMention() != nil:
-			for end < len(content) && (content[end].GetText() != nil || content[end].GetMention() != nil) {
+		case isText(content[start]):
+			for end < len(content) && isText(content[end]) {
 				end++
 			}
 			rendered, err := renderText(content[start:end])
@@ -109,8 +113,8 @@ func buildSendPlan(target *pb.Target, chain *pb.MessageChain) (*sendPlan, *pb.Er
 			}
 			operation.method = "sendMessage"
 			operation.params = rendered
-		case content[start].GetImage() != nil || content[start].GetVideo() != nil:
-			for end < len(content) && end-start < maxAlbumMedia && (content[end].GetImage() != nil || content[end].GetVideo() != nil) {
+		case isAlbum(content[start]):
+			for end < len(content) && end-start < maxAlbumMedia && isAlbum(content[end]) {
 				end++
 			}
 			var media []map[string]any
@@ -142,7 +146,7 @@ func buildSendPlan(target *pb.Target, chain *pb.MessageChain) (*sendPlan, *pb.Er
 					operation.params["duration"] = duration
 				}
 			}
-		case content[start].GetFile() != nil:
+		case isFile(content[start]):
 			rendered, upload, err := renderMedia(content[start], indexes[start])
 			if err != nil {
 				return nil, err
@@ -173,7 +177,7 @@ func buildSendPlan(target *pb.Target, chain *pb.MessageChain) (*sendPlan, *pb.Er
 	if buttonsIndex >= 0 {
 		last := &plan.operations[len(plan.operations)-1]
 		if last.method == "sendMediaGroup" {
-			return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "telegram cannot attach buttons to an album")
+			return nil, planError(errcode.Unsupported, "telegram cannot attach buttons to an album")
 		}
 		last.params["reply_markup"] = markup
 		last.segmentIndexes = append(last.segmentIndexes, uint32(buttonsIndex))
@@ -184,53 +188,63 @@ func buildSendPlan(target *pb.Target, chain *pb.MessageChain) (*sendPlan, *pb.Er
 	return plan, nil
 }
 
-func renderMedia(segment *pb.Segment, index uint32) (map[string]any, *plannedUpload, *pb.ErrorInfo) {
-	var source *pb.MediaSource
-	var caption *string
+func isText(s msg.Segment) bool {
+	switch s.(type) {
+	case msg.TextSegment, msg.MentionSegment:
+		return true
+	}
+	return false
+}
+func isAlbum(s msg.Segment) bool {
+	switch s.(type) {
+	case msg.ImageSegment, msg.VideoSegment:
+		return true
+	}
+	return false
+}
+func isFile(s msg.Segment) bool { _, ok := s.(msg.FileSegment); return ok }
+
+func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpload, *errcode.Error) {
+	var source msg.MediaSource
+	var caption string
 	kind, filename := "", ""
 	result := make(map[string]any)
-	switch {
-	case segment.GetImage() != nil:
-		image := segment.GetImage()
-		source, caption, kind = image.Source, image.Caption, "photo"
-	case segment.GetVideo() != nil:
-		video := segment.GetVideo()
-		source, caption, kind = video.Source, video.Caption, "video"
-		if video.DurationMs != nil {
-			result["duration"] = video.GetDurationMs() / uint64(time.Second/time.Millisecond)
+	switch media := segment.(type) {
+	case msg.ImageSegment:
+		source, caption, kind = media.Source, media.Caption, "photo"
+	case msg.VideoSegment:
+		source, caption, kind = media.Source, media.Caption, "video"
+		if media.Duration != 0 {
+			result["duration"] = uint64(media.Duration / time.Second)
 		}
-	case segment.GetFile() != nil:
-		file := segment.GetFile()
-		source, caption, kind = file.Source, file.Caption, "document"
-		filename = file.GetFilename()
+	case msg.FileSegment:
+		source, caption, kind = media.Source, media.Caption, "document"
+		filename = media.Filename
 		if strings.ContainsAny(filename, "/\\") {
 			return nil, nil, invalidPlan("file filename must not contain a path")
 		}
 	}
-	if caption != nil {
-		if utf16Length(*caption) > maxCaptionUTF16 {
+	if caption != "" {
+		if utf16Length(caption) > maxCaptionUTF16 {
 			return nil, nil, invalidPlan("telegram caption exceeds UTF-16 length limit")
 		}
-		result["caption"] = *caption
+		result["caption"] = caption
 	}
 	result["type"] = kind
-	switch value := source.GetSource().(type) {
-	case *pb.MediaSource_MediaRef:
-		if value.MediaRef == "" {
-			return nil, nil, invalidPlan("media_ref must not be empty")
-		}
+	switch {
+	case source.MediaRef != "":
 		field := fmt.Sprintf("media_%d", index)
 		result["media"] = "attach://" + field
 		if filename == "" {
 			filename = field
 		}
-		return result, &plannedUpload{field: field, token: value.MediaRef, filename: filename}, nil
-	case *pb.MediaSource_HttpsUrl:
-		parsed, err := url.Parse(value.HttpsUrl)
+		return result, &plannedUpload{field: field, token: source.MediaRef, filename: filename}, nil
+	case source.HTTPSURL != "":
+		parsed, err := url.Parse(source.HTTPSURL)
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 			return nil, nil, invalidPlan("media URL must use https")
 		}
-		result["media"] = value.HttpsUrl
+		result["media"] = source.HTTPSURL
 		return result, nil, nil
 	default:
 		return nil, nil, invalidPlan("media source must be media_ref or https_url")

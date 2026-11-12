@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 func TestCallbackDelivery(t *testing.T) {
@@ -17,7 +17,7 @@ func TestCallbackDelivery(t *testing.T) {
 		json.RawMessage(`{"update_id":11,"callback_query":{"id":"inline-2","from":{"id":8},"data":"inline-token","inline_message_id":"inline"}}`),
 	)
 	core := newRecordingCore()
-	core.deliver = func(ctx context.Context, event *pb.Event, raw []byte) (bool, error) {
+	core.deliver = func(ctx context.Context, event *msg.Event, raw []byte) (bool, error) {
 		requests := server.Requests()
 		if len(requests) != 1 || requests[0].Method != "answerCallbackQuery" || requests[0].Params["callback_query_id"] != "callback-1" {
 			t.Errorf("callback delivered before answer: %v", requests)
@@ -44,8 +44,8 @@ func TestCallbackDelivery(t *testing.T) {
 		t.Fatalf("events=%v offsets=%v", core.events, core.offsets)
 	}
 	event := core.events[0]
-	payload := event.GetEventPayload().GetButtonClicked()
-	if event.EventType != "button.clicked" || event.GetSourceEventId() != "10" || event.Target.ChatId != "-100" || event.Target.GetThreadId() != "8" || event.Actor.GetExternalUserId() != "7" || event.Actor.GetAdapterInstanceId() != "test-instance" || payload.GetValue() != "opaque-token" || payload.GetCallbackQueryId() != "callback-1" || payload.GetOriginPlatformMessageId() != "42" || payload.GetActionId() != "" {
+	payload := event.Payload.(*msg.ButtonClickedPayload)
+	if event.Type != "button.clicked" || event.SourceEventID != "10" || event.Session != "telegram:-100#8" || event.Actor.ExternalUserID != "7" || event.Actor.AdapterInstanceID != "test-instance" || payload.Value != "opaque-token" || payload.CallbackQueryID != "callback-1" || payload.OriginPlatformMessageID != "42" || payload.ActionID != "" {
 		t.Fatalf("callback event: %v", event)
 	}
 	requests := server.Requests()

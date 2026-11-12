@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/AlonaBot/AlonaBot/adapters/telegram/perm"
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 const (
@@ -26,7 +26,7 @@ type administratorCache struct {
 }
 
 // addPlatformPermissions 在 normalize 成功后调用；缓存只由接收循环读写。
-func (i *instance) addPlatformPermissions(ctx context.Context, raw json.RawMessage, events []*pb.Event) error {
+func (i *instance) addPlatformPermissions(ctx context.Context, raw json.RawMessage, events []*msg.Event) error {
 	var update struct {
 		Message       *telegramMessage       `json:"message"`
 		EditedMessage *telegramMessage       `json:"edited_message"`
@@ -96,7 +96,7 @@ func (i *instance) addPlatformPermissions(ctx context.Context, raw json.RawMessa
 			continue
 		}
 		for _, member := range cached.members {
-			if event.Actor.ExternalUserId != strconv.FormatInt(member.User.ID, 10) {
+			if event.Actor.ExternalUserID != strconv.FormatInt(member.User.ID, 10) {
 				continue
 			}
 			switch member.Status {

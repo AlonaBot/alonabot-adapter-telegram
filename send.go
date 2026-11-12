@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk"
-	"google.golang.org/protobuf/proto"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 const mediaReadChunk = 1 << 20 // CONTRACTS §1.3：每次媒体读取至多 1 MiB。
@@ -21,18 +21,18 @@ type sentMessage struct {
 }
 
 // Send 完整预检后依次执行物理操作，失败时返回已发生的结果和安全错误。
-func (i *instance) Send(ctx context.Context, target *pb.Target, chain *pb.MessageChain) (*pb.SendResult, *pb.ErrorInfo) {
-	result := &pb.SendResult{Target: target, Status: pb.SendStatus_SEND_STATUS_REJECTED}
-	plan, safe := buildSendPlan(target, chain)
+func (i *instance) Send(ctx context.Context, to msg.Session, chain msg.Chain) (*msg.SendResult, *errcode.Error) {
+	result := &msg.SendResult{Session: to, AdapterInstanceID: i.id, Status: msg.SendRejected}
+	plan, safe := buildSendPlan(to, chain)
 	if safe != nil {
 		return result, safe
 	}
 	// 1. 先列出全部计划步骤，失败后的未尝试操作仍保留在回执中。
 	for index, operation := range plan.operations {
-		result.PartResults = append(result.PartResults, &pb.PartResult{PartIndex: uint32(index), SegmentIndexes: operation.segmentIndexes, Status: pb.PartStatus_PART_STATUS_NOT_ATTEMPTED})
+		result.PartResults = append(result.PartResults, msg.PartResult{PartIndex: uint32(index), SegmentIndexes: operation.segmentIndexes, Status: msg.PartNotAttempted})
 	}
 	for index, operation := range plan.operations {
-		part := result.PartResults[index]
+		part := &result.PartResults[index]
 		// 2. 到达当前操作才读取媒体；读取失败时不发起该步平台请求。
 		files := make([][]byte, 0, len(operation.uploads))
 		for _, upload := range operation.uploads {
@@ -44,7 +44,7 @@ func (i *instance) Send(ctx context.Context, target *pb.Target, chain *pb.Messag
 			files = append(files, content)
 		}
 		if safe != nil {
-			part.Status = pb.PartStatus_PART_STATUS_REJECTED
+			part.Status = msg.PartRejected
 			part.Error = safe
 			break
 		}
@@ -76,41 +76,41 @@ func (i *instance) Send(ctx context.Context, target *pb.Target, chain *pb.Messag
 			}
 		}
 		if err != nil {
-			part.Status = pb.PartStatus_PART_STATUS_UNKNOWN
+			part.Status = msg.PartUnknown
 			var api *apiError
 			if errors.As(err, &api) {
-				part.Status = pb.PartStatus_PART_STATUS_REJECTED
+				part.Status = msg.PartRejected
 			}
 			safe = i.platformSendError(err)
 			part.Error = safe
 			break
 		}
 		// 3. 保留所有已确认 ID；零 ID 只记录平台已接受的事实。
-		part.Status = pb.PartStatus_PART_STATUS_ACCEPTED
+		part.Status = msg.PartAccepted
 		for _, message := range messages {
 			if *message.ID == 0 {
-				part.MessageIdsUnavailable = true
+				part.MessageIDsUnavailable = true
 				continue
 			}
 			id := strconv.FormatInt(*message.ID, 10)
-			part.PlatformMessageIds = append(part.PlatformMessageIds, id)
-			result.PlatformMessageIds = append(result.PlatformMessageIds, id)
-			if result.PrimaryPlatformMessageId == nil {
-				result.PrimaryPlatformMessageId = proto.String(id)
+			part.PlatformMessageIDs = append(part.PlatformMessageIDs, id)
+			result.PlatformMessageIDs = append(result.PlatformMessageIDs, id)
+			if result.PrimaryPlatformMessageID == "" {
+				result.PrimaryPlatformMessageID = id
 			}
-			if result.ProviderAcceptedTimeUnixMs == nil && message.Date != 0 {
-				result.ProviderAcceptedTimeUnixMs = proto.Int64(message.Date * int64(time.Second/time.Millisecond))
+			if result.ProviderAcceptedAt.IsZero() && message.Date != 0 {
+				result.ProviderAcceptedAt = time.Unix(message.Date, 0)
 			}
 		}
 	}
-	result.Status = pb.SendStatus_SEND_STATUS_ACCEPTED
+	result.Status = msg.SendAccepted
 	if safe != nil {
-		result.Status = pb.SendStatus_SEND_STATUS_PARTIAL
+		result.Status = msg.SendPartial
 		switch result.PartResults[0].Status {
-		case pb.PartStatus_PART_STATUS_REJECTED:
-			result.Status = pb.SendStatus_SEND_STATUS_REJECTED
-		case pb.PartStatus_PART_STATUS_UNKNOWN:
-			result.Status = pb.SendStatus_SEND_STATUS_UNKNOWN
+		case msg.PartRejected:
+			result.Status = msg.SendRejected
+		case msg.PartUnknown:
+			result.Status = msg.SendUnknown
 		}
 	}
 	return result, safe
@@ -132,35 +132,35 @@ func (i *instance) readSendMedia(ctx context.Context, token string) ([]byte, err
 	}
 }
 
-func (i *instance) mediaSendError(err error) *pb.ErrorInfo {
+func (i *instance) mediaSendError(err error) *errcode.Error {
 	var public *sdk.Error
 	if errors.As(err, &public) {
 		return planError(public.Code, i.client.redact.Replace(public.Message))
 	}
-	return planError(pb.ErrorCode_ERROR_CODE_UNAVAILABLE, i.client.safeError(err).Error())
+	return planError(errcode.Unavailable, i.client.safeError(err).Error())
 }
 
-func (i *instance) platformSendError(err error) *pb.ErrorInfo {
-	code := pb.ErrorCode_ERROR_CODE_UNAVAILABLE
+func (i *instance) platformSendError(err error) *errcode.Error {
+	code := errcode.Unavailable
 	message := i.client.safeError(err).Error()
 	var api *apiError
 	if errors.As(err, &api) {
 		switch api.status {
 		case http.StatusBadRequest:
-			code = pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT
+			code = errcode.InvalidArgument
 		case http.StatusUnauthorized:
-			code = pb.ErrorCode_ERROR_CODE_UNAUTHENTICATED
+			code = errcode.Unauthenticated
 		case http.StatusForbidden:
-			code = pb.ErrorCode_ERROR_CODE_PERMISSION_DENIED
+			code = errcode.PermissionDenied
 		case http.StatusTooManyRequests:
-			code = pb.ErrorCode_ERROR_CODE_RESOURCE_EXHAUSTED
+			code = errcode.ResourceExhausted
 			message = fmt.Sprintf("%s; retry_after=%d seconds", message, int64(api.retryAfter/time.Second))
 		}
 	}
 	return planError(code, message)
 }
 
-func (i *instance) usedSendCapabilities(result *pb.SendResult, operation sendOperation) {
+func (i *instance) usedSendCapabilities(result *msg.SendResult, operation sendOperation) {
 	names := []string{"message.send"}
 	if operation.params["parse_mode"] == markdownMode {
 		names = append(names, "message.markdown")

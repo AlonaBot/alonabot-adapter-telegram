@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 // Bot API 公共服务的 getFile 下载上限，见 CONTRACTS §1.4。
@@ -24,7 +25,7 @@ type telegramFile struct {
 	Height   uint64  `json:"height"`
 }
 
-func (m *telegramMessage) mediaSegment() *pb.Segment {
+func (m *telegramMessage) mediaSegment() msg.Segment {
 	var file *telegramFile
 	switch {
 	case len(m.Photo) > 0:
@@ -48,15 +49,15 @@ func (m *telegramMessage) mediaSegment() *pb.Segment {
 	default:
 		return nil
 	}
-	incoming := &pb.IncomingMedia{Token: file.ID, Size: file.Size, Mime: file.MIME}
-	source := &pb.MediaSource{Source: &pb.MediaSource_IncomingRef{IncomingRef: incoming}}
+	incoming := &msg.IncomingMedia{Token: file.ID, Size: deref(file.Size), MIME: deref(file.MIME)}
+	source := incoming.Source()
 	switch {
 	case len(m.Photo) > 0:
-		return &pb.Segment{Data: &pb.Segment_Image{Image: &pb.ImageSegment{Source: source, Caption: m.Caption}}}
+		return msg.ImageSegment{Source: source, Caption: deref(m.Caption)}
 	case m.Video != nil || m.Animation != nil:
-		return &pb.Segment{Data: &pb.Segment_Video{Video: &pb.VideoSegment{Source: source, Caption: m.Caption}}}
+		return msg.VideoSegment{Source: source, Caption: deref(m.Caption)}
 	default:
-		return &pb.Segment{Data: &pb.Segment_File{File: &pb.FileSegment{Source: source, Filename: file.Filename, Mime: file.MIME, Caption: m.Caption}}}
+		return msg.FileSegment{Source: source, Filename: deref(file.Filename), MIME: deref(file.MIME), Caption: deref(m.Caption)}
 	}
 }
 
@@ -81,7 +82,7 @@ func (i *instance) fileLocation(ctx context.Context, fileID string, offset uint6
 	}{fileID}, file); err != nil {
 		var api *apiError
 		if errors.As(err, &api) && api.status == http.StatusBadRequest && strings.Contains(api.description, "file is too big") {
-			return nil, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNSUPPORTED, Message: api.Error()}
+			return nil, &sdk.Error{Code: errcode.Unsupported, Message: api.Error()}
 		}
 		return nil, err
 	}
@@ -118,11 +119,11 @@ func (i *instance) ReadPlatformFile(ctx context.Context, fileID string, offset u
 		}
 	}()
 	if offset > maxDownloadSize {
-		return nil, offset, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "media offset exceeds download limit"}
+		return nil, offset, false, &sdk.Error{Code: errcode.InvalidArgument, Message: "media offset exceeds download limit"}
 	}
 	if file.Size != nil {
 		if offset > *file.Size {
-			return nil, offset, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "media offset exceeds file size"}
+			return nil, offset, false, &sdk.Error{Code: errcode.InvalidArgument, Message: "media offset exceeds file size"}
 		}
 		if offset == *file.Size {
 			return nil, offset, true, nil
@@ -153,7 +154,7 @@ func (i *instance) ReadPlatformFile(ctx context.Context, fileID string, offset u
 				return nil, offset, true, nil
 			}
 			if offset > total {
-				return nil, offset, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "media offset exceeds file size"}
+				return nil, offset, false, &sdk.Error{Code: errcode.InvalidArgument, Message: "media offset exceeds file size"}
 			}
 		}
 	}
@@ -189,7 +190,7 @@ func (i *instance) ReadPlatformFile(ctx context.Context, fileID string, offset u
 	// 3. 平台忽略 Range 返回 200 时，沿用流式跳过前缀和一个字节的 EOF 探测。
 	if _, err := io.CopyN(io.Discard, response.Body, int64(offset)); err != nil {
 		if err == io.EOF {
-			return nil, offset, false, &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: "media offset exceeds file size"}
+			return nil, offset, false, &sdk.Error{Code: errcode.InvalidArgument, Message: "media offset exceeds file size"}
 		}
 		return nil, offset, false, i.client.safeError(err)
 	}
@@ -208,5 +209,5 @@ func (i *instance) ReadPlatformFile(ctx context.Context, fileID string, offset u
 }
 
 func downloadUnsupported() error {
-	return &sdk.Error{Code: pb.ErrorCode_ERROR_CODE_UNSUPPORTED, Message: "telegram file exceeds 20 MiB download limit"}
+	return &sdk.Error{Code: errcode.Unsupported, Message: "telegram file exceeds 20 MiB download limit"}
 }

@@ -15,8 +15,8 @@ import (
 	"testing"
 
 	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 func TestIncomingMedia(t *testing.T) {
@@ -72,34 +72,34 @@ func TestIncomingMedia(t *testing.T) {
 		t.Fatal("received media was downloaded before read")
 	}
 	core.mu.Lock()
-	events := append([]*pb.Event(nil), core.events...)
+	events := append([]*msg.Event(nil), core.events...)
 	core.mu.Unlock()
 	if len(events) != 2 {
 		t.Fatalf("events = %d", len(events))
 	}
 	for n, event := range events {
-		segments := event.Message.Chain.Segments
+		segments := event.Message.Chain
 		if len(segments) != 1 {
 			t.Fatalf("segments = %v", segments)
 		}
-		var source *pb.MediaSource
+		var source msg.MediaSource
 		var caption string
 		if n == 0 {
-			source = segments[0].GetImage().GetSource()
-			caption = segments[0].GetImage().GetCaption()
+			source = segments[0].(msg.ImageSegment).Source
+			caption = segments[0].(msg.ImageSegment).Caption
 			if caption != "photo caption" {
 				t.Fatalf("caption = %q", caption)
 			}
 		} else {
-			file := segments[0].GetFile()
-			source = file.GetSource()
-			if file.GetFilename() != "report.txt" || file.GetMime() != "text/plain" || file.GetCaption() != "document caption" {
+			file := segments[0].(msg.FileSegment)
+			source = file.Source
+			if file.Filename != "report.txt" || file.MIME != "text/plain" || file.Caption != "document caption" {
 				t.Fatalf("file = %v", file)
 			}
 		}
-		incoming := source.GetIncomingRef()
+		incoming := source.Incoming
 		want := []string{"large-photo", "document-id"}[n]
-		if incoming.GetToken() != want || incoming.GetSize() != uint64(len(content)) {
+		if incoming.Token != want || incoming.Size != uint64(len(content)) {
 			t.Fatalf("incoming = %v", incoming)
 		}
 		reader := inst.(adapter.MediaSource)

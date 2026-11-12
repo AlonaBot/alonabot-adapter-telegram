@@ -6,7 +6,8 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
+	"github.com/AlonaBot/AlonaBot/sdk/errcode"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 // Telegram Bot API 的发送文本、caption 和 callback_data 上限。
@@ -17,12 +18,12 @@ const (
 	markdownMode     = "MarkdownV2"
 )
 
-func planError(code pb.ErrorCode, message string) *pb.ErrorInfo {
-	return &pb.ErrorInfo{Code: code, SafeMessage: message}
+func planError(code errcode.Code, message string) *errcode.Error {
+	return &errcode.Error{Code: code, Message: message}
 }
 
-func invalidPlan(message string) *pb.ErrorInfo {
-	return planError(pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, message)
+func invalidPlan(message string) *errcode.Error {
+	return planError(errcode.InvalidArgument, message)
 }
 
 func decimalID(value string) (int64, bool) {
@@ -43,44 +44,41 @@ func entityBoundary(text string, offset uint64) bool {
 	return position == offset
 }
 
-func renderEntity(text string, entity *pb.TextEntity, base int) (map[string]any, *pb.ErrorInfo) {
-	if entity == nil {
-		return nil, invalidPlan("missing text entity")
-	}
-	start, length := uint64(entity.OffsetUtf16), uint64(entity.LengthUtf16)
+func renderEntity(text string, entity msg.TextEntity, base int) (map[string]any, *errcode.Error) {
+	start, length := uint64(entity.OffsetUTF16), uint64(entity.LengthUTF16)
 	end := start + length
 	if length == 0 || end > uint64(utf16Length(text)) || !entityBoundary(text, start) || !entityBoundary(text, end) {
 		return nil, invalidPlan("invalid UTF-16 entity range")
 	}
-	names := map[pb.EntityType]string{
-		pb.EntityType_ENTITY_TYPE_BOLD: "bold", pb.EntityType_ENTITY_TYPE_ITALIC: "italic",
-		pb.EntityType_ENTITY_TYPE_UNDERLINE: "underline", pb.EntityType_ENTITY_TYPE_STRIKETHROUGH: "strikethrough",
-		pb.EntityType_ENTITY_TYPE_SPOILER: "spoiler", pb.EntityType_ENTITY_TYPE_CODE: "code", pb.EntityType_ENTITY_TYPE_PRE: "pre",
-		pb.EntityType_ENTITY_TYPE_TEXT_LINK: "text_link", pb.EntityType_ENTITY_TYPE_TEXT_MENTION: "text_mention",
+	names := map[msg.EntityType]string{
+		msg.EntityBold: "bold", msg.EntityItalic: "italic",
+		msg.EntityUnderline: "underline", msg.EntityStrikethrough: "strikethrough",
+		msg.EntitySpoiler: "spoiler", msg.EntityCode: "code", msg.EntityPre: "pre",
+		msg.EntityTextLink: "text_link", msg.EntityTextMention: "text_mention",
 	}
 	name, ok := names[entity.Type]
 	if !ok {
-		return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "unsupported text entity")
+		return nil, planError(errcode.Unsupported, "unsupported text entity")
 	}
 	result := map[string]any{"type": name, "offset": base + int(start), "length": int(length)}
 	switch entity.Type {
-	case pb.EntityType_ENTITY_TYPE_TEXT_LINK:
-		if entity.GetUrl() == "" {
+	case msg.EntityTextLink:
+		if entity.URL == "" {
 			return nil, invalidPlan("text_link requires url")
 		}
-		result["url"] = entity.GetUrl()
-	case pb.EntityType_ENTITY_TYPE_TEXT_MENTION:
-		if entity.GetExternalUserId() == "" {
+		result["url"] = entity.URL
+	case msg.EntityTextMention:
+		if entity.ExternalUserID == "" {
 			return nil, invalidPlan("text_mention requires external_user_id")
 		}
-		id, ok := decimalID(entity.GetExternalUserId())
+		id, ok := decimalID(entity.ExternalUserID)
 		if !ok {
-			return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "telegram mention requires a decimal user ID")
+			return nil, planError(errcode.Unsupported, "telegram mention requires a decimal user ID")
 		}
 		result["user"] = map[string]any{"id": id}
-	case pb.EntityType_ENTITY_TYPE_PRE:
-		if entity.Language != nil {
-			result["language"] = entity.GetLanguage()
+	case msg.EntityPre:
+		if entity.Language != "" {
+			result["language"] = entity.Language
 		}
 	}
 	return result, nil
@@ -97,11 +95,11 @@ func escapeMarkdown(text string) string {
 	return result.String()
 }
 
-func renderText(segments []*pb.Segment) (map[string]any, *pb.ErrorInfo) {
+func renderText(segments msg.Chain) (map[string]any, *errcode.Error) {
 	// 1. 确定整段格式，避免合并后把普通文字解释为 Markdown。
 	markdown := false
 	for _, segment := range segments {
-		if text := segment.GetText(); text != nil && text.GetFormat() == pb.TextFormat_TEXT_FORMAT_MARKDOWN {
+		if text, ok := segment.(msg.TextSegment); ok && text.Format == msg.FormatMarkdown {
 			markdown = true
 		}
 	}
@@ -109,15 +107,15 @@ func renderText(segments []*pb.Segment) (map[string]any, *pb.ErrorInfo) {
 	var entities []map[string]any
 	units := 0
 	for _, segment := range segments {
-		if text := segment.GetText(); text != nil {
-			switch text.GetFormat() {
-			case pb.TextFormat_TEXT_FORMAT_UNSPECIFIED, pb.TextFormat_TEXT_FORMAT_PLAIN:
-			case pb.TextFormat_TEXT_FORMAT_MARKDOWN:
+		if text, ok := segment.(msg.TextSegment); ok {
+			switch text.Format {
+			case msg.TextFormat(0), msg.FormatPlain:
+			case msg.FormatMarkdown:
 				if len(text.Entities) > 0 {
 					return nil, invalidPlan("markdown cannot include entities")
 				}
 			default:
-				return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "unsupported text format")
+				return nil, planError(errcode.Unsupported, "unsupported text format")
 			}
 			for _, entity := range text.Entities {
 				rendered, err := renderEntity(text.Text, entity, units)
@@ -127,9 +125,9 @@ func renderText(segments []*pb.Segment) (map[string]any, *pb.ErrorInfo) {
 				entities = append(entities, rendered)
 			}
 			if markdown && len(text.Entities) > 0 {
-				return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "markdown cannot be combined with explicit entities")
+				return nil, planError(errcode.Unsupported, "markdown cannot be combined with explicit entities")
 			}
-			if markdown && text.GetFormat() != pb.TextFormat_TEXT_FORMAT_MARKDOWN {
+			if markdown && text.Format != msg.FormatMarkdown {
 				output.WriteString(escapeMarkdown(text.Text))
 			} else {
 				output.WriteString(text.Text)
@@ -137,17 +135,17 @@ func renderText(segments []*pb.Segment) (map[string]any, *pb.ErrorInfo) {
 			units += utf16Length(text.Text)
 			continue
 		}
-		mention := segment.GetMention()
-		if mention == nil {
+		mention, ok := segment.(msg.MentionSegment)
+		if !ok {
 			return nil, invalidPlan("missing text or mention")
 		}
-		id, ok := decimalID(mention.ExternalUserId)
+		id, ok := decimalID(mention.ExternalUserID)
 		if !ok {
-			return nil, planError(pb.ErrorCode_ERROR_CODE_UNSUPPORTED, "telegram mention requires a decimal user ID")
+			return nil, planError(errcode.Unsupported, "telegram mention requires a decimal user ID")
 		}
-		display := mention.GetDisplay()
-		if mention.Display == nil {
-			display = mention.ExternalUserId
+		display := mention.Display
+		if mention.Display == "" {
+			display = mention.ExternalUserID
 		}
 		if display == "" {
 			return nil, invalidPlan("mention display must not be empty")
@@ -174,24 +172,24 @@ func renderText(segments []*pb.Segment) (map[string]any, *pb.ErrorInfo) {
 	return result, nil
 }
 
-func renderButtons(buttons *pb.ButtonsSegment) (map[string]any, *pb.ErrorInfo) {
-	if buttons == nil || len(buttons.Rows) == 0 {
+func renderButtons(buttons msg.ButtonsSegment) (map[string]any, *errcode.Error) {
+	if len(buttons.Rows) == 0 {
 		return nil, invalidPlan("buttons require rows")
 	}
 	rows := make([][]map[string]any, 0, len(buttons.Rows))
 	for _, row := range buttons.Rows {
-		if row == nil || len(row.Buttons) == 0 {
+		if len(row) == 0 {
 			return nil, invalidPlan("button row must not be empty")
 		}
-		rendered := make([]map[string]any, 0, len(row.Buttons))
-		for _, button := range row.Buttons {
-			if button == nil || len(button.GetCoreToken()) == 0 || len(button.GetCoreToken()) > maxCallbackBytes {
+		rendered := make([]map[string]any, 0, len(row))
+		for _, button := range row {
+			if len(button.CoreToken) == 0 || len(button.CoreToken) > maxCallbackBytes {
 				return nil, invalidPlan("button core_token must contain 1 to 64 bytes")
 			}
 			if button.Label == "" {
 				return nil, invalidPlan("button label must not be empty")
 			}
-			rendered = append(rendered, map[string]any{"text": button.Label, "callback_data": button.GetCoreToken()})
+			rendered = append(rendered, map[string]any{"text": button.Label, "callback_data": button.CoreToken})
 		}
 		rows = append(rows, rendered)
 	}

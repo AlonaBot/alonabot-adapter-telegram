@@ -6,8 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 
-	pb "github.com/AlonaBot/AlonaBot/contracts/pb/alonabotv1"
-	"google.golang.org/protobuf/proto"
+	msg "github.com/AlonaBot/AlonaBot/sdk/message"
 )
 
 type telegramCallbackQuery struct {
@@ -18,7 +17,7 @@ type telegramCallbackQuery struct {
 }
 
 // callback 先确认平台回调，再构造交给 Core 验证的点击事件。
-func (i *instance) callback(ctx context.Context, queryJSON json.RawMessage, updateID int64, raw json.RawMessage) ([]*pb.Event, error) {
+func (i *instance) callback(ctx context.Context, queryJSON json.RawMessage, updateID int64, raw json.RawMessage) ([]*msg.Event, error) {
 	var query telegramCallbackQuery
 	if err := json.Unmarshal(queryJSON, &query); err != nil {
 		return nil, err
@@ -34,15 +33,15 @@ func (i *instance) callback(ctx context.Context, queryJSON json.RawMessage, upda
 		return nil, nil
 	}
 	event := i.baseEvent(query.Message.Chat, 0, query.From)
-	event.OccurredAtUnixMs = i.now().UnixMilli()
+	event.OccurredAt = i.now()
 	if query.Message.IsTopicMessage && query.Message.ThreadID != nil {
-		event.Target.ThreadId = proto.String(strconv.FormatInt(*query.Message.ThreadID, 10))
+		event.Session = msg.NewSession(AdapterID, strconv.FormatInt(query.Message.Chat.ID, 10), strconv.FormatInt(*query.Message.ThreadID, 10))
 	}
-	event.EventType = "button.clicked"
-	event.EventPayload = &pb.EventPayload{Kind: &pb.EventPayload_ButtonClicked{ButtonClicked: &pb.ButtonClickedPayload{
-		Value: query.Data, CallbackQueryId: query.ID,
-		OriginPlatformMessageId: proto.String(strconv.FormatInt(query.Message.ID, 10)),
-	}}}
+	event.Type = "button.clicked"
+	event.Payload = &msg.ButtonClickedPayload{
+		Value: query.Data, CallbackQueryID: query.ID,
+		OriginPlatformMessageID: strconv.FormatInt(query.Message.ID, 10),
+	}
 	i.source(event, updateID, raw)
-	return []*pb.Event{event}, nil
+	return []*msg.Event{event}, nil
 }
