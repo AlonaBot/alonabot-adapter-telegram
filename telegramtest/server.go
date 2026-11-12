@@ -214,7 +214,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getUpdates(w, r)
 	case "getFile":
 		s.getFile(w, r)
-	case "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup", "editMessageText":
+	case "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup", "editMessageText", "answerCallbackQuery":
 		s.sendMessage(w, r, method)
 	case "getChatAdministrators":
 		s.getChatAdministrators(w, r)

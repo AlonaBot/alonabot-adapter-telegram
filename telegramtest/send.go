@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Request 保存一次发送或编辑调用的参数和上传文件。
+// Request 保存一次发送、编辑或回调确认的参数和上传文件。
 type Request struct {
 	Method string
 	Params map[string]any // multipart 的 JSON 字段已解码。
@@ -33,7 +33,7 @@ type sendState struct {
 	messageID int64
 }
 
-// Requests 按到达顺序返回发送与编辑请求的深副本。
+// Requests 按到达顺序返回发送、编辑与回调确认请求的深副本。
 func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,7 +181,9 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, method stri
 	s.send.counts[method]++
 	fault := s.send.faults[sendCall{method, s.send.counts[method]}]
 	var result any
-	if fault.status == 0 && !fault.drop {
+	if method == "answerCallbackQuery" {
+		result = true
+	} else if fault.status == 0 && !fault.drop {
 		messages := make([]any, count)
 		for i := range messages {
 			s.send.messageID++

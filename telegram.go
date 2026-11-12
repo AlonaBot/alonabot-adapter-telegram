@@ -43,7 +43,7 @@ func New() adapter.Adapter {
 }
 
 func platformCapabilities() []*pb.Capability {
-	return []*pb.Capability{{Name: "message.send", Version: 1, Supported: true}, {Name: "message.markdown", Version: 1, Supported: true}, {Name: "message.album", Version: 1, Supported: true}, {Name: "message.reference", Version: 1, Supported: true}, {Name: "message.buttons", Version: 1, Supported: true}, {Name: editCapability, Version: 1, Supported: true}, {Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
+	return []*pb.Capability{{Name: "button.clicked", Version: 1, Supported: true}, {Name: "message.send", Version: 1, Supported: true}, {Name: "message.markdown", Version: 1, Supported: true}, {Name: "message.album", Version: 1, Supported: true}, {Name: "message.reference", Version: 1, Supported: true}, {Name: "message.buttons", Version: 1, Supported: true}, {Name: editCapability, Version: 1, Supported: true}, {Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
 }
 
 // Descriptor 声明本 Adapter 的接收、发送、编辑能力与会话平台权限。
@@ -283,7 +283,8 @@ var errInvalidUpdateID = errors.New("telegram update has no valid update_id")
 func (i *instance) processUpdate(ctx context.Context, raw json.RawMessage, saved cursor) (cursor, error) {
 	// 1. 单独读取 update_id，使其他字段解析失败时仍可安全推进游标。
 	var update struct {
-		ID *int64 `json:"update_id"`
+		ID            *int64          `json:"update_id"`
+		CallbackQuery json.RawMessage `json:"callback_query"`
 	}
 	if err := json.Unmarshal(raw, &update); err != nil {
 		return saved, errors.Join(errInvalidUpdateID, err)
@@ -293,7 +294,13 @@ func (i *instance) processUpdate(ctx context.Context, raw json.RawMessage, saved
 	}
 	next := saved
 	next.Offset = *update.ID + 1
-	events, err := i.normalize(raw)
+	var events []*pb.Event
+	var err error
+	if len(update.CallbackQuery) > 0 {
+		events, err = i.callback(ctx, update.CallbackQuery, *update.ID, raw)
+	} else {
+		events, err = i.normalize(raw)
+	}
 	if err == nil {
 		err = i.addPlatformPermissions(ctx, raw, events)
 	}

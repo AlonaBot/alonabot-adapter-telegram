@@ -28,11 +28,12 @@ type administratorCache struct {
 // addPlatformPermissions 在 normalize 成功后调用；缓存只由接收循环读写。
 func (i *instance) addPlatformPermissions(ctx context.Context, raw json.RawMessage, events []*pb.Event) error {
 	var update struct {
-		Message       *telegramMessage  `json:"message"`
-		EditedMessage *telegramMessage  `json:"edited_message"`
-		MyChatMember  *membershipUpdate `json:"my_chat_member"`
-		ChatMember    *membershipUpdate `json:"chat_member"`
-		Reaction      *reactionUpdate   `json:"message_reaction"`
+		Message       *telegramMessage       `json:"message"`
+		EditedMessage *telegramMessage       `json:"edited_message"`
+		MyChatMember  *membershipUpdate      `json:"my_chat_member"`
+		ChatMember    *membershipUpdate      `json:"chat_member"`
+		Reaction      *reactionUpdate        `json:"message_reaction"`
+		CallbackQuery *telegramCallbackQuery `json:"callback_query"`
 	}
 	if err := json.Unmarshal(raw, &update); err != nil {
 		return err
@@ -55,6 +56,8 @@ func (i *instance) addPlatformPermissions(ctx context.Context, raw json.RawMessa
 		chat = update.ChatMember.Chat
 	case update.Reaction != nil:
 		chat = update.Reaction.Chat
+	case update.CallbackQuery != nil && update.CallbackQuery.Message != nil:
+		chat = update.CallbackQuery.Message.Chat
 	}
 	if chat.Type != groupChat && chat.Type != supergroupChat {
 		return nil
