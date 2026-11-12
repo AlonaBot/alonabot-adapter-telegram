@@ -74,6 +74,10 @@ func (c *recordingCore) ReadMedia(context.Context, string, uint64, uint32) ([]by
 	return nil, 0, false, &sdk.Error{Code: errcode.Unsupported, Message: "outbound media is not configured in this receiving fixture"}
 }
 
+func (c *recordingCore) MediaURL(context.Context, string, string) (string, time.Time, error) {
+	return "", time.Time{}, &sdk.Error{Code: errcode.Unsupported, Message: "media URL is not configured in this receiving fixture"}
+}
+
 // SetDefault 会同时修改 log 包的输出与标志，清理时一并恢复。
 func setDefaultLogger(t *testing.T, logger *slog.Logger) {
 	t.Helper()
