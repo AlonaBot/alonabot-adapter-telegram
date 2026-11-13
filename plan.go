@@ -232,6 +232,9 @@ func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpl
 	}
 	result["type"] = kind
 	switch {
+	case source.PlatformFile != "":
+		result["media"] = source.PlatformFile
+		return result, nil, nil
 	case source.MediaRef != "":
 		field := fmt.Sprintf("media_%d", index)
 		result["media"] = "attach://" + field
@@ -247,6 +250,6 @@ func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpl
 		result["media"] = source.HTTPSURL
 		return result, nil, nil
 	default:
-		return nil, nil, invalidPlan("media source must be media_ref or https_url")
+		return nil, nil, invalidPlan("media source must be platform_file, media_ref or https_url")
 	}
 }
