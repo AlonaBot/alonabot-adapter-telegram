@@ -41,7 +41,7 @@ func TestSendPlan(t *testing.T) {
 	image := func(token string) msg.Segment { return msg.Image(msg.MediaSource{MediaRef: token}) }
 	chain := func() msg.Chain {
 		return msg.Chain{
-			msg.Quote(msg.NewMessageRef("telegram:-123", "42", "")),
+			msg.Quote(msg.Ref("telegram:-123", "42", "")),
 			text("before"), image("photo-a"), image("photo-b"), text("after"),
 			msg.File(msg.MediaSource{MediaRef: "document"}, "example.bin"),
 			msg.Buttons([]msg.Button{{Label: "Open", CoreToken: "core-token"}}),
@@ -78,7 +78,7 @@ func TestSendPlan(t *testing.T) {
 				segment := msg.TextSegment{Text: "bad", Format: msg.FormatMarkdown, Entities: []msg.TextEntity{{Type: msg.EntityBold, LengthUTF16: 3}}}
 				message = append(message, segment)
 			}
-			target := msg.NewSession(AdapterID, "-123", "")
+			target := msg.SID(AdapterID, "-123", "")
 			result, safe := running.Send(context.Background(), target, message)
 			requests := server.Requests()
 			if result == nil || result.Session != target || result.AdapterInstanceID != "send-instance" {

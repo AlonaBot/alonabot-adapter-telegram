@@ -4,8 +4,6 @@
 // Core 持久化逐条游标，实例仅在收到应答后推进内存状态（MESSAGE-MODEL §6.1）。
 package telegram
 
-//go:generate go run ../../cmd/alonabot build --out ../../bin/generated/adapters-telegram
-
 import (
 	"context"
 	"encoding/json"

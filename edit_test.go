@@ -34,7 +34,7 @@ func TestEditMessageText(t *testing.T) {
 				indexes = append(indexes, 1)
 				params["reply_markup"] = map[string]any{"inline_keyboard": []any{[]any{map[string]any{"text": "Open", "callback_data": "core-token"}}}}
 			}
-			target := msg.NewSession(AdapterID, "-123", "99")
+			target := msg.SID(AdapterID, "-123", "99")
 			result, safe := running.(adapter.Editor).Edit(context.Background(), target, "42", chain)
 			requests := server.Requests()
 			if len(requests) != 1 || requests[0].Method != "editMessageText" || !reflect.DeepEqual(requests[0].Params, params) || len(requests[0].Files) != 0 {

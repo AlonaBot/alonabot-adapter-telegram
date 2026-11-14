@@ -35,7 +35,7 @@ func (i *instance) callback(ctx context.Context, queryJSON json.RawMessage, upda
 	event := i.baseEvent(query.Message.Chat, 0, query.From)
 	event.OccurredAt = i.now()
 	if query.Message.IsTopicMessage && query.Message.ThreadID != nil {
-		event.Session = msg.NewSession(AdapterID, strconv.FormatInt(query.Message.Chat.ID, 10), strconv.FormatInt(*query.Message.ThreadID, 10))
+		event.Session = msg.SID(AdapterID, strconv.FormatInt(query.Message.Chat.ID, 10), strconv.FormatInt(*query.Message.ThreadID, 10))
 	}
 	event.Type = "button.clicked"
 	event.Payload = &msg.ButtonClickedPayload{

@@ -189,7 +189,7 @@ func (i *instance) baseEvent(chat telegramChat, date int64, user *telegramUser) 
 	if date != 0 {
 		occurred = time.Unix(date, 0)
 	}
-	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.NewSession(AdapterID, strconv.FormatInt(chat.ID, 10), ""), OccurredAt: occurred, Actor: i.actor(user)}
+	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.SID(AdapterID, strconv.FormatInt(chat.ID, 10), ""), OccurredAt: occurred, Actor: i.actor(user)}
 }
 
 func (*instance) source(event *msg.Event, id int64, raw json.RawMessage) {
@@ -242,7 +242,7 @@ func (i *instance) messageEvent(received *telegramMessage, edited bool) (*msg.Ev
 		event.Actor = nil
 	}
 	if received.IsTopicMessage && received.ThreadID != nil {
-		event.Session = msg.NewSession(AdapterID, strconv.FormatInt(received.Chat.ID, 10), strconv.FormatInt(*received.ThreadID, 10))
+		event.Session = msg.SID(AdapterID, strconv.FormatInt(received.Chat.ID, 10), strconv.FormatInt(*received.ThreadID, 10))
 	}
 	chain := msg.Chain{}
 	text, entities := received.Text, received.Entities

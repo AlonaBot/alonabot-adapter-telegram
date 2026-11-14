@@ -15,7 +15,7 @@ var _ adapter.Editor = (*instance)(nil)
 
 // Edit 用 editMessageText 修改一条文本消息，完整保留单项回执与平台错误。
 // 失败时不重试或发送新消息，平台拒绝为 REJECTED，结果不确定为 UNKNOWN。
-func (i *instance) Edit(ctx context.Context, to msg.Session, platformMessageID string, chain msg.Chain) (*msg.SendResult, *errcode.Error) {
+func (i *instance) Edit(ctx context.Context, to string, platformMessageID string, chain msg.Chain) (*msg.SendResult, *errcode.Error) {
 	// 1. 编辑始终只有一个物理操作；预检拒绝也保留这一项。
 	part := msg.PartResult{Status: msg.PartRejected}
 	for index := range chain {
@@ -58,11 +58,11 @@ func (i *instance) Edit(ctx context.Context, to msg.Session, platformMessageID s
 	return result, nil
 }
 
-func buildEditParams(to msg.Session, platformMessageID string, chain msg.Chain) (map[string]any, *errcode.Error) {
+func buildEditParams(to string, platformMessageID string, chain msg.Chain) (map[string]any, *errcode.Error) {
 	// 1. 编辑由 chat_id/message_id 定位，不传 thread 参数。
-	_, chat, _, valid := to.Parts()
+	_, chat, _, parseErr := msg.ParseSID(to)
 	chatID, ok := decimalID(chat)
-	if !valid || !ok {
+	if parseErr != nil || !ok {
 		return nil, invalidPlan("telegram target requires a decimal chat_id")
 	}
 	messageID, ok := decimalID(platformMessageID)

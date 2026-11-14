@@ -21,7 +21,7 @@ type sentMessage struct {
 }
 
 // Send 完整预检后依次执行物理操作，失败时返回已发生的结果和安全错误。
-func (i *instance) Send(ctx context.Context, to msg.Session, chain msg.Chain) (*msg.SendResult, *errcode.Error) {
+func (i *instance) Send(ctx context.Context, to string, chain msg.Chain) (*msg.SendResult, *errcode.Error) {
 	result := &msg.SendResult{Session: to, AdapterInstanceID: i.id, Status: msg.SendRejected}
 	plan, safe := buildSendPlan(to, chain)
 	if safe != nil {

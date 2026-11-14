@@ -30,11 +30,11 @@ type sendPlan struct {
 	operations []sendOperation
 }
 
-func buildSendPlan(to msg.Session, chain msg.Chain) (*sendPlan, *errcode.Error) {
+func buildSendPlan(to string, chain msg.Chain) (*sendPlan, *errcode.Error) {
 	// 1. 校验目标和全部片段；计划阶段不读取媒体或调用平台。
-	_, chat, thread, valid := to.Parts()
+	_, chat, thread, parseErr := msg.ParseSID(to)
 	chatID, ok := decimalID(chat)
-	if !valid || !ok {
+	if parseErr != nil || !ok {
 		return nil, invalidPlan("telegram target requires a decimal chat_id")
 	}
 	common := map[string]any{"chat_id": chatID}
@@ -60,13 +60,13 @@ func buildSendPlan(to msg.Session, chain msg.Chain) (*sendPlan, *errcode.Error) 
 				return nil, invalidPlan("chain requires at most one reference")
 			}
 			referenceIndex = index
-			other, messageID, _, valid := data.Ref.Parts()
+			other, messageID, _, parseErr := msg.ParseRef(data.Ref)
 			id, ok := decimalID(messageID)
-			if !valid || !ok {
+			if parseErr != nil || !ok {
 				return nil, invalidPlan("reference requires a decimal message ID")
 			}
 			if other != "" {
-				_, otherChat, _, _ := other.Parts()
+				_, otherChat, _, _ := msg.ParseSID(other)
 				otherID, ok := decimalID(otherChat)
 				if !ok {
 					return nil, invalidPlan("reference requires a decimal chat_id")
