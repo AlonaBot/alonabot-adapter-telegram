@@ -189,7 +189,16 @@ func (i *instance) baseEvent(chat telegramChat, date int64, user *telegramUser) 
 	if date != 0 {
 		occurred = time.Unix(date, 0)
 	}
-	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.SID(AdapterID, strconv.FormatInt(chat.ID, 10), ""), OccurredAt: occurred, Actor: i.actor(user)}
+	var chatType msg.ChatType
+	switch chat.Type {
+	case "private":
+		chatType = msg.ChatPrivate
+	case groupChat, supergroupChat:
+		chatType = msg.ChatGroup
+	case "channel":
+		chatType = msg.ChatChannel
+	}
+	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.SID(AdapterID, strconv.FormatInt(chat.ID, 10), ""), ChatType: chatType, OccurredAt: occurred, Actor: i.actor(user)}
 }
 
 func (*instance) source(event *msg.Event, id int64, raw json.RawMessage) {
