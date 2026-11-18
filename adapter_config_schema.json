@@ -1,5 +1,4 @@
 {
-  "$version": 1,
   "token": {
     "type": "string",
     "secret": true,
