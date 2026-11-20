@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
 	msg "github.com/AlonaBot/AlonaBot/sdk/message"
+	"github.com/AlonaBot/alonabot-adapter-telegram/telegramtest"
 )
 
 func TestCallbackDelivery(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram"
 	"github.com/AlonaBot/AlonaBot/sdk"
+	"github.com/AlonaBot/alonabot-adapter-telegram"
 )
 
 func main() {

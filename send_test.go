@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
 	"github.com/AlonaBot/AlonaBot/sdk/errcode"
 	msg "github.com/AlonaBot/AlonaBot/sdk/message"
+	"github.com/AlonaBot/alonabot-adapter-telegram/telegramtest"
 )
 
 type sendTestCore struct {

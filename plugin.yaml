@@ -5,4 +5,4 @@ author: AlonaBot
 role: adapter
 adapter_id: telegram
 description: Official Telegram Bot API adapter
-source: github.com/AlonaBot/AlonaBot
+source: github.com/AlonaBot/alonabot-adapter-telegram

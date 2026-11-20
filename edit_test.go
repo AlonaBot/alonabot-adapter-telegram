@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
 	"github.com/AlonaBot/AlonaBot/sdk/errcode"
 	msg "github.com/AlonaBot/AlonaBot/sdk/message"
+	"github.com/AlonaBot/alonabot-adapter-telegram/telegramtest"
 )
 
 // TestEditMessageText 验证真实实例的编辑参数、单项回执、平台拒绝与按钮渲染。

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram/perm"
 	msg "github.com/AlonaBot/AlonaBot/sdk/message"
+	"github.com/AlonaBot/alonabot-adapter-telegram/perm"
 )
 
 const (

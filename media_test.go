@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram/telegramtest"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
 	msg "github.com/AlonaBot/AlonaBot/sdk/message"
+	"github.com/AlonaBot/alonabot-adapter-telegram/telegramtest"
 )
 
 func TestIncomingMedia(t *testing.T) {

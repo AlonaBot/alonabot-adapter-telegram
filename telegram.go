@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlonaBot/AlonaBot/adapters/telegram/perm"
 	"github.com/AlonaBot/AlonaBot/sdk"
 	"github.com/AlonaBot/AlonaBot/sdk/adapter"
 	"github.com/AlonaBot/AlonaBot/sdk/errcode"
 	msg "github.com/AlonaBot/AlonaBot/sdk/message"
+	"github.com/AlonaBot/alonabot-adapter-telegram/perm"
 )
 
 // AdapterID 标识 Telegram 平台。
