@@ -199,3 +199,29 @@ func TestMediaDownloadRedaction(t *testing.T) {
 		})
 	}
 }
+
+// TestCustomFileBase 固定 file_base_url 与 api_base_url 的独立路由。
+func TestCustomFileBase(t *testing.T) {
+	api := telegramtest.NewServer(t, "local-secret-token")
+	files := telegramtest.NewServer(t, "local-secret-token")
+	content := []byte("custom file server")
+	api.AddFile("file", "documents/file.txt", content)
+	files.AddFile("file", "documents/file.txt", content)
+	request := startRequest(t, api)
+	config, err := json.Marshal(map[string]string{"token": "local-secret-token", "api_base_url": api.URL(), "file_base_url": files.URL()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ConfigJSON = config
+	running, err := New().Start(t.Context(), request, newRecordingCore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerStop(t, running)
+	// API 端保留不同内容，以便发现下载错误地沿用 API 地址。
+	api.AddFile("file", "documents/file.txt", []byte("wrong source"))
+	actual, _, eof, err := running.(adapter.MediaSource).ReadPlatformFile(t.Context(), "file", 0, uint32(len(content)))
+	if err != nil || !eof || !bytes.Equal(actual, content) {
+		t.Fatalf("custom download=%q eof=%v error=%v", actual, eof, err)
+	}
+}

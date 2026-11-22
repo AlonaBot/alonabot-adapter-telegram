@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,21 +34,7 @@ func (i *instance) Send(ctx context.Context, to string, chain msg.Chain) (*msg.S
 	}
 	for index, operation := range plan.operations {
 		part := &result.PartResults[index]
-		// 2. 到达当前操作才读取媒体；读取失败时不发起该步平台请求。
-		files := make([][]byte, 0, len(operation.uploads))
-		for _, upload := range operation.uploads {
-			content, err := i.readSendMedia(ctx, upload.token)
-			if err != nil {
-				safe = i.mediaSendError(err)
-				break
-			}
-			files = append(files, content)
-		}
-		if safe != nil {
-			part.Status = msg.PartRejected
-			part.Error = safe
-			break
-		}
+		// 2. 到达当前操作才分块读取媒体并上传，内存只保留当前块。
 		i.usedSendCapabilities(result, operation)
 		var messages []sentMessage
 		var message sentMessage
@@ -57,7 +44,7 @@ func (i *instance) Send(ctx context.Context, to string, chain msg.Chain) (*msg.S
 		}
 		var err error
 		if len(operation.uploads) > 0 {
-			err = i.client.multipart(ctx, operation.method, operation.params, operation.uploads, files, response)
+			err = i.client.multipart(ctx, operation.method, operation.params, operation.uploads, i.writeSendMedia, response)
 		} else {
 			err = i.client.call(ctx, operation.method, operation.params, response)
 		}
@@ -116,33 +103,37 @@ func (i *instance) Send(ctx context.Context, to string, chain msg.Chain) (*msg.S
 	return result, safe
 }
 
-func (i *instance) readSendMedia(ctx context.Context, token string) ([]byte, error) {
-	var content []byte
+func (i *instance) writeSendMedia(ctx context.Context, writer io.Writer, upload plannedUpload) error {
+	if upload.token == "" {
+		_, err := writer.Write(upload.content)
+		return err
+	}
 	var offset uint64
 	for {
-		chunk, next, eof, err := i.core.ReadMedia(ctx, token, offset, mediaReadChunk)
-		if err != nil {
-			return nil, err
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		content = append(content, chunk...)
+		chunk, next, eof, err := i.core.ReadMedia(ctx, upload.token, offset, mediaReadChunk)
+		if err != nil {
+			return err
+		}
+		if _, err := writer.Write(chunk); err != nil {
+			return err
+		}
 		if eof {
-			return content, nil
+			return nil
 		}
 		offset = next
 	}
 }
 
-func (i *instance) mediaSendError(err error) *errcode.Error {
-	var public *sdk.Error
-	if errors.As(err, &public) {
-		return planError(public.Code, i.client.redact.Replace(public.Message))
-	}
-	return planError(errcode.Unavailable, i.client.safeError(err).Error())
-}
-
 func (i *instance) platformSendError(err error) *errcode.Error {
 	code := errcode.Unavailable
 	message := i.client.safeError(err).Error()
+	var public *sdk.Error
+	if errors.As(err, &public) {
+		code = public.Code
+	}
 	var api *apiError
 	if errors.As(err, &api) {
 		switch api.status {
@@ -167,6 +158,9 @@ func (i *instance) usedSendCapabilities(result *msg.SendResult, operation sendOp
 	}
 	if operation.method == "sendMediaGroup" {
 		names = append(names, "message.album")
+	}
+	if operation.method == "sendVoice" {
+		names = append(names, "message.voice")
 	}
 	if operation.params["reply_parameters"] != nil {
 		names = append(names, "message.reference")

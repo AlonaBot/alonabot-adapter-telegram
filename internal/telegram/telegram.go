@@ -44,13 +44,15 @@ func New() adapter.Adapter {
 }
 
 func platformCapabilities() []msg.Capability {
-	return []msg.Capability{{Name: "button.clicked", Version: 1, Supported: true}, {Name: "message.send", Version: 1, Supported: true, TextLimit: &msg.TextLimit{Max: maxTextUTF16, Unit: msg.TextUTF16CodeUnits}}, {Name: "message.markdown", Version: 1, Supported: true}, {Name: "message.album", Version: 1, Supported: true}, {Name: "message.reference", Version: 1, Supported: true}, {Name: "message.buttons", Version: 1, Supported: true}, {Name: editCapability, Version: 1, Supported: true}, {Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
+	return []msg.Capability{{Name: "message.voice", Version: 1, Supported: true}, {Name: "message.delete", Version: 1, Supported: true}, {Name: "commands.sync", Version: 1, Supported: true}, {Name: "button.clicked", Version: 1, Supported: true}, {Name: "message.send", Version: 1, Supported: true, TextLimit: &msg.TextLimit{Max: maxTextUTF16, Unit: msg.TextUTF16CodeUnits}}, {Name: "message.markdown", Version: 1, Supported: true}, {Name: "message.album", Version: 1, Supported: true}, {Name: "message.reference", Version: 1, Supported: true}, {Name: "message.buttons", Version: 1, Supported: true}, {Name: editCapability, Version: 1, Supported: true}, {Name: "message.created", Version: 1, Supported: true}, {Name: "message.edited", Version: 1, Supported: true}, {Name: "member.joined", Version: 1, Supported: true}, {Name: "member.left", Version: 1, Supported: true}, {Name: "reaction.added", Version: 1, Supported: true}}
 }
 
 // Descriptor 声明本 Adapter 的接收、发送、编辑能力与会话平台权限。
 func (*telegramAdapter) Descriptor() *adapter.Descriptor {
 	return &adapter.Descriptor{
 		AdapterID: AdapterID, Capabilities: platformCapabilities(),
+		Events:  eventDeclarations(),
+		Actions: actionDeclarations(),
 		Permissions: []adapter.PermissionDeclaration{
 			{Name: perm.ChatOwner, Implies: []string{perm.ChatAdmin}, LabelKey: "permission.chat_owner"},
 			{Name: perm.ChatAdmin, Implies: []string{"chat_admin"}, LabelKey: "permission.chat_admin"},
@@ -62,10 +64,13 @@ func (*telegramAdapter) Descriptor() *adapter.Descriptor {
 func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartRequest, core adapter.Core) (adapter.Instance, error) {
 	// 1. 在配置边界验证参数，错误只返回字段名。
 	var config struct {
-		Token      string `json:"token"`
-		APIBaseURL string `json:"api_base_url"`
-		ProxyMode  string `json:"proxy_mode"`
-		Proxy      string `json:"proxy"`
+		Token                  string `json:"token"`
+		APIBaseURL             string `json:"api_base_url"`
+		FileBaseURL            string `json:"file_base_url"`
+		ProxyMode              string `json:"proxy_mode"`
+		Proxy                  string `json:"proxy"`
+		AutoSyncCommands       *bool  `json:"auto_sync_commands"`
+		ClearCommandsOnDisable *bool  `json:"clear_commands_on_disable"`
 	}
 	if err := json.Unmarshal(request.ConfigJSON, &config); err != nil || config.Token == "" {
 		return nil, &sdk.Error{Code: errcode.InvalidArgument, Message: "invalid telegram configuration"}
@@ -80,6 +85,12 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	if err != nil {
 		return nil, &sdk.Error{Code: errcode.InvalidArgument, Message: err.Error()}
 	}
+	if config.FileBaseURL != "" {
+		if err := client.setFileBase(config.FileBaseURL, config.Token); err != nil {
+			client.http.CloseIdleConnections()
+			return nil, &sdk.Error{Code: errcode.InvalidArgument, Message: err.Error()}
+		}
+	}
 	saved := cursor{RoundStartUnixMS: a.now().UnixMilli()}
 	if len(request.Cursor) > 0 {
 		if err := json.Unmarshal(request.Cursor, &saved); err != nil {
@@ -88,6 +99,13 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 		}
 	}
 	i := &instance{client: client, core: core, id: request.InstanceID, now: a.now, done: make(chan struct{}), administrators: make(map[int64]administratorCache)}
+	i.commandConfig = adapter.CommandMenuConfig{AutoSyncCommands: true, ClearCommandsOnDisable: true}
+	if config.AutoSyncCommands != nil {
+		i.commandConfig.AutoSyncCommands = *config.AutoSyncCommands
+	}
+	if config.ClearCommandsOnDisable != nil {
+		i.commandConfig.ClearCommandsOnDisable = *config.ClearCommandsOnDisable
+	}
 	a.mu.Lock()
 	_, exists := a.instances[i.id]
 	if !exists {
@@ -161,17 +179,19 @@ type cursor struct {
 
 // instance 的接收状态仅由 receive goroutine 修改；Stop 通过 cancel/done 交接生命周期。
 type instance struct {
-	fileMu         sync.Mutex // 仅保护文件路径缓存的读写。
-	files          map[string]*platformFileLocation
-	client         *botClient
-	core           adapter.Core
-	id             string
-	account        adapter.Account
-	botID          int64
-	cancel         context.CancelFunc
-	done           chan struct{}
-	now            func() time.Time
-	administrators map[int64]administratorCache // 仅由接收循环拥有，按会话缓存管理员列表。
+	fileMu           sync.Mutex // 仅保护文件路径缓存的读写。
+	files            map[string]*platformFileLocation
+	client           *botClient
+	core             adapter.Core
+	id               string
+	account          adapter.Account
+	botID            int64
+	cancel           context.CancelFunc
+	done             chan struct{}
+	now              func() time.Time
+	administrators   map[int64]administratorCache
+	administratorsMu sync.Mutex // 接收循环与成员管理动作共用缓存。
+	commandConfig    adapter.CommandMenuConfig
 }
 
 // Account 返回 getMe 验证过的机器人身份。

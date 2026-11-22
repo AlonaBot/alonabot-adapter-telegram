@@ -10,12 +10,30 @@
   },
   "proxy_mode": {
     "type": "string",
-    "options": ["none", "core", "custom"],
+    "options": [
+      "none",
+      "core",
+      "custom"
+    ],
     "default": "none"
   },
   "proxy": {
     "type": "string",
     "secret": true,
-    "condition": {"proxy_mode": "custom"}
+    "condition": {
+      "proxy_mode": "custom"
+    }
+  },
+  "file_base_url": {
+    "type": "string",
+    "default": ""
+  },
+  "auto_sync_commands": {
+    "type": "bool",
+    "default": true
+  },
+  "clear_commands_on_disable": {
+    "type": "bool",
+    "default": true
   }
 }

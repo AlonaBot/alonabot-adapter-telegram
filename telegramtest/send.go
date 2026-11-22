@@ -3,17 +3,25 @@ package telegramtest
 import (
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 )
 
-// Request 保存一次发送、编辑或回调确认的参数和上传文件。
+// Request 保存一次平台消息、动作或菜单操作的参数和上传文件。
 type Request struct {
-	Method string
-	Params map[string]any // multipart 的 JSON 字段已解码。
-	Files  map[string][]byte
+	Method       string
+	Params       map[string]any // multipart 的 JSON 字段已解码。
+	Files        map[string][]byte
+	FileMetadata map[string]FileMetadata
+}
+
+// FileMetadata 保留上传文件的原名和 multipart 媒体类型。
+type FileMetadata struct {
+	Filename    string
+	ContentType string
 }
 
 type sendCall struct {
@@ -27,23 +35,51 @@ type sendFault struct {
 	drop        bool
 }
 type sendState struct {
-	requests  []Request
-	counts    map[string]int
-	faults    map[sendCall]sendFault
-	messageID int64
+	requests     []Request
+	menuRequests []Request
+	counts       map[string]int
+	faults       map[sendCall]sendFault
+	messageID    int64
+	results      map[string]json.RawMessage
+	menus        map[string][]any
 }
 
-// Requests 按到达顺序返回发送、编辑与回调确认请求的深副本。
+// SetResult 配置方法的完整 result；故障响应也可附带此结果以验证部分错误。
+func (s *Server) SetResult(method string, result json.RawMessage) {
+	s.t.Helper()
+	if !json.Valid(result) {
+		s.t.Fatal("invalid Bot API result JSON")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.send.results == nil {
+		s.send.results = make(map[string]json.RawMessage)
+	}
+	s.send.results[method] = slices.Clone(result)
+}
+
+// Requests 按到达顺序返回消息、编辑、回调与动作记录；菜单操作见 MenuRequests。
 func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := make([]Request, len(s.send.requests))
-	for i, request := range s.send.requests {
+	return cloneRequests(s.send.requests)
+}
+
+// MenuRequests 返回命令菜单操作记录；自动菜单同步不会改变既有 Requests 的消息顺序。
+func (s *Server) MenuRequests() []Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneRequests(s.send.menuRequests)
+}
+
+func cloneRequests(requests []Request) []Request {
+	result := make([]Request, len(requests))
+	for i, request := range requests {
 		files := make(map[string][]byte, len(request.Files))
 		for name, content := range request.Files {
 			files[name] = slices.Clone(content)
 		}
-		result[i] = Request{Method: request.Method, Params: cloneParams(request.Params).(map[string]any), Files: files}
+		result[i] = Request{Method: request.Method, Params: cloneParams(request.Params).(map[string]any), Files: files, FileMetadata: maps.Clone(request.FileMetadata)}
 	}
 	return result
 }
@@ -97,7 +133,7 @@ func (s *Server) setSendFault(call sendCall, fault sendFault) {
 }
 
 func readSendRequest(r *http.Request, method string) (Request, error) {
-	request := Request{Method: method, Params: make(map[string]any), Files: make(map[string][]byte)}
+	request := Request{Method: method, Params: make(map[string]any), Files: make(map[string][]byte), FileMetadata: make(map[string]FileMetadata)}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		err := json.NewDecoder(r.Body).Decode(&request.Params)
 		return request, err
@@ -120,6 +156,7 @@ func readSendRequest(r *http.Request, method string) (Request, error) {
 		}
 		if part.FileName() != "" {
 			request.Files[part.FormName()] = content
+			request.FileMetadata[part.FormName()] = FileMetadata{Filename: part.FileName(), ContentType: part.Header.Get("Content-Type")}
 			continue
 		}
 		var value any = string(content)
@@ -174,32 +211,38 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, method stri
 		}
 	}
 	s.mu.Lock()
-	s.send.requests = append(s.send.requests, request)
+	if method == "setMyCommands" || method == "getMyCommands" || method == "deleteMyCommands" {
+		s.send.menuRequests = append(s.send.menuRequests, request)
+	} else {
+		s.send.requests = append(s.send.requests, request)
+	}
 	if s.send.counts == nil {
 		s.send.counts = make(map[string]int)
 	}
 	s.send.counts[method]++
 	fault := s.send.faults[sendCall{method, s.send.counts[method]}]
 	var result any
-	if method == "answerCallbackQuery" {
-		result = true
-	} else if fault.status == 0 && !fault.drop {
-		messages := make([]any, count)
-		for i := range messages {
-			s.send.messageID++
-			id := s.send.messageID
-			if editing {
-				id = editID
+	if fault.status == 0 && !fault.drop {
+		var handled bool
+		result, handled = s.actionResult(request, chatID)
+		if !handled {
+			messages := make([]any, count)
+			for i := range messages {
+				s.send.messageID++
+				id := s.send.messageID
+				if editing {
+					id = editID
+				}
+				if fault.zero {
+					id = 0
+				}
+				messages[i] = map[string]any{"message_id": id, "date": 0, "chat": map[string]any{"id": chatID, "type": "private"}}
 			}
-			if fault.zero {
-				id = 0
+			if method == "sendMediaGroup" {
+				result = messages
+			} else {
+				result = messages[0]
 			}
-			messages[i] = map[string]any{"message_id": id, "date": 0, "chat": map[string]any{"id": chatID, "type": "private"}}
-		}
-		if method == "sendMediaGroup" {
-			result = messages
-		} else {
-			result = messages[0]
 		}
 	}
 	s.mu.Unlock()
@@ -217,6 +260,11 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, method stri
 	}
 	if fault.status != 0 {
 		response := map[string]any{"ok": false, "error_code": fault.status, "description": fault.description}
+		s.mu.Lock()
+		if result, ok := s.send.results[method]; ok {
+			response["result"] = result
+		}
+		s.mu.Unlock()
 		if fault.status == http.StatusTooManyRequests {
 			response["parameters"] = map[string]int{"retry_after": 1}
 		}

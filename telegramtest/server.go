@@ -1,7 +1,7 @@
 // Package telegramtest 提供通过真实 HTTP 调用的本地 Telegram Bot API 模拟服务。
 //
 // [NewServer] 创建由测试拥有的 [Server]，支持账号检查、webhook 冲突、long polling
-// 与接收故障注入、getFile、文件下载、getChatAdministrators，以及消息发送和编辑；
+// 与接收故障注入、文件下载、管理员查询、消息发送/编辑、平台动作和命令菜单；
 // 调用记录可验证订阅范围、逐条游标与出站参数。
 package telegramtest
 
@@ -214,7 +214,8 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.getUpdates(w, r)
 	case "getFile":
 		s.getFile(w, r)
-	case "sendMessage", "sendPhoto", "sendVideo", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup", "editMessageText", "answerCallbackQuery":
+	case "sendMessage", "sendPhoto", "sendVideo", "sendVoice", "sendAnimation", "sendDocument", "sendMediaGroup", "editMessageReplyMarkup", "editMessageText", "answerCallbackQuery",
+		"deleteMessages", "banChatMember", "unbanChatMember", "restrictChatMember", "pinChatMessage", "unpinChatMessage", "setMessageReaction", "getChat", "getChatMember", "getChatMemberCount", "setChatTitle", "leaveChat", "sendChatAction", "sendMessageDraft", "setMyCommands", "getMyCommands", "deleteMyCommands":
 		s.sendMessage(w, r, method)
 	case "getChatAdministrators":
 		s.getChatAdministrators(w, r)

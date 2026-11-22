@@ -1,6 +1,8 @@
 package telegram
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"slices"
@@ -17,6 +19,8 @@ type plannedUpload struct {
 	field    string
 	token    string
 	filename string
+	mime     string
+	content  []byte
 }
 
 type sendOperation struct {
@@ -86,7 +90,7 @@ func buildSendPlan(to string, chain msg.Chain) (*sendPlan, *errcode.Error) {
 			if err != nil {
 				return nil, err
 			}
-		case msg.TextSegment, msg.MentionSegment, msg.ImageSegment, msg.VideoSegment, msg.FileSegment:
+		case msg.TextSegment, msg.MentionSegment, msg.ImageSegment, msg.VideoSegment, msg.FileSegment, msg.VoiceSegment:
 			content = append(content, segment)
 			indexes = append(indexes, uint32(index))
 		case msg.ForwardSegment:
@@ -146,15 +150,19 @@ func buildSendPlan(to string, chain msg.Chain) (*sendPlan, *errcode.Error) {
 					operation.params["duration"] = duration
 				}
 			}
-		case isFile(content[start]):
+		case isFile(content[start]) || isStandaloneMedia(content[start]):
 			rendered, upload, err := renderMedia(content[start], indexes[start])
 			if err != nil {
 				return nil, err
 			}
-			operation.method = "sendDocument"
-			operation.params["document"] = rendered["media"]
+			kind := rendered["type"].(string)
+			operation.method = map[string]string{"document": "sendDocument", "voice": "sendVoice", "animation": "sendAnimation"}[kind]
+			operation.params[kind] = rendered["media"]
 			if caption, ok := rendered["caption"]; ok {
 				operation.params["caption"] = caption
+			}
+			if duration, ok := rendered["duration"]; ok {
+				operation.params["duration"] = duration
 			}
 			if upload != nil {
 				operation.uploads = append(operation.uploads, *upload)
@@ -196,6 +204,9 @@ func isText(s msg.Segment) bool {
 	return false
 }
 func isAlbum(s msg.Segment) bool {
+	if isStandaloneMedia(s) {
+		return false
+	}
 	switch s.(type) {
 	case msg.ImageSegment, msg.VideoSegment:
 		return true
@@ -203,6 +214,24 @@ func isAlbum(s msg.Segment) bool {
 	return false
 }
 func isFile(s msg.Segment) bool { _, ok := s.(msg.FileSegment); return ok }
+
+func isStandaloneMedia(s msg.Segment) bool {
+	if _, ok := s.(msg.VoiceSegment); ok {
+		return true
+	}
+	image, ok := s.(msg.ImageSegment)
+	if !ok {
+		return false
+	}
+	if image.Source.MediaRef != "" || image.Source.PlatformFile != "" {
+		return image.Source.MIME == "image/gif"
+	}
+	if image.Source.InlineBase64 != "" {
+		prefix, _ := base64.StdEncoding.DecodeString(image.Source.InlineBase64[:min(8, len(image.Source.InlineBase64))])
+		return bytes.HasPrefix(prefix, []byte("GIF8"))
+	}
+	return false
+}
 
 func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpload, *errcode.Error) {
 	var source msg.MediaSource
@@ -212,6 +241,14 @@ func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpl
 	switch media := segment.(type) {
 	case msg.ImageSegment:
 		source, caption, kind = media.Source, media.Caption, "photo"
+		if isStandaloneMedia(media) {
+			kind = "animation"
+		}
+	case msg.VoiceSegment:
+		source, caption, kind = media.Source, media.Caption, "voice"
+		if media.Duration != 0 {
+			result["duration"] = uint64(media.Duration / time.Second)
+		}
 	case msg.VideoSegment:
 		source, caption, kind = media.Source, media.Caption, "video"
 		if media.Duration != 0 {
@@ -235,13 +272,28 @@ func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpl
 	case source.PlatformFile != "":
 		result["media"] = source.PlatformFile
 		return result, nil, nil
-	case source.MediaRef != "":
+	case source.MediaRef != "" || source.InlineBase64 != "":
+		var content []byte
+		if source.InlineBase64 != "" {
+			var err error
+			content, err = base64.StdEncoding.DecodeString(source.InlineBase64)
+			if err != nil {
+				return nil, nil, invalidPlan("invalid inline_base64: " + err.Error())
+			}
+		}
 		field := fmt.Sprintf("media_%d", index)
 		result["media"] = "attach://" + field
+		contentType := source.MIME
+		if kind == "animation" {
+			contentType = "image/gif"
+		}
 		if filename == "" {
 			filename = field
+			if contentType == "image/gif" {
+				filename += ".gif"
+			}
 		}
-		return result, &plannedUpload{field: field, token: source.MediaRef, filename: filename}, nil
+		return result, &plannedUpload{field: field, token: source.MediaRef, filename: filename, mime: contentType, content: content}, nil
 	case source.HTTPSURL != "":
 		parsed, err := url.Parse(source.HTTPSURL)
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
@@ -250,6 +302,6 @@ func renderMedia(segment msg.Segment, index uint32) (map[string]any, *plannedUpl
 		result["media"] = source.HTTPSURL
 		return result, nil, nil
 	default:
-		return nil, nil, invalidPlan("media source must be platform_file, media_ref or https_url")
+		return nil, nil, invalidPlan("media source must be platform_file, media_ref, inline_base64 or https_url")
 	}
 }

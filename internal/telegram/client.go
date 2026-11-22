@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
@@ -90,9 +92,34 @@ func (c *botClient) call(ctx context.Context, method string, request any, result
 	return c.request(ctx, method, "application/json", bytes.NewReader(body), result)
 }
 
-func (c *botClient) multipart(ctx context.Context, method string, params map[string]any, uploads []plannedUpload, files [][]byte, result any) error {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
+func (c *botClient) setFileBase(base, token string) error {
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("invalid file_base_url")
+	}
+	c.fileBase = strings.TrimRight(base, "/") + "/file/bot" + url.PathEscape(token) + "/"
+	return nil
+}
+
+func (c *botClient) multipart(ctx context.Context, method string, params map[string]any, uploads []plannedUpload, writeFile func(context.Context, io.Writer, plannedUpload) error, result any) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	reader, body := io.Pipe()
+	writer := multipart.NewWriter(body)
+	done := make(chan error, 1)
+	go func() {
+		err := writeMultipart(ctx, writer, params, uploads, writeFile)
+		body.CloseWithError(err)
+		done <- err
+	}()
+	err := c.request(ctx, method, writer.FormDataContentType(), reader, result)
+	cancel()
+	reader.CloseWithError(err)
+	writeErr := <-done
+	return errors.Join(err, writeErr)
+}
+
+func writeMultipart(ctx context.Context, writer *multipart.Writer, params map[string]any, uploads []plannedUpload, writeFile func(context.Context, io.Writer, plannedUpload) error) error {
 	for name, value := range params {
 		var field string
 		if text, ok := value.(string); ok {
@@ -100,27 +127,31 @@ func (c *botClient) multipart(ctx context.Context, method string, params map[str
 		} else {
 			encoded, err := json.Marshal(value)
 			if err != nil {
-				return c.safeError(err)
+				return err
 			}
 			field = string(encoded)
 		}
 		if err := writer.WriteField(name, field); err != nil {
-			return c.safeError(err)
+			return err
 		}
 	}
-	for index, upload := range uploads {
-		part, err := writer.CreateFormFile(upload.field, upload.filename)
+	for _, upload := range uploads {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": upload.field, "filename": upload.filename}))
+		contentType := upload.mime
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		header.Set("Content-Type", contentType)
+		part, err := writer.CreatePart(header)
 		if err != nil {
-			return c.safeError(err)
+			return err
 		}
-		if _, err := part.Write(files[index]); err != nil {
-			return c.safeError(err)
+		if err := writeFile(ctx, part, upload); err != nil {
+			return err
 		}
 	}
-	if err := writer.Close(); err != nil {
-		return c.safeError(err)
-	}
-	return c.request(ctx, method, writer.FormDataContentType(), &body, result)
+	return writer.Close()
 }
 
 func (c *botClient) request(ctx context.Context, method, contentType string, body io.Reader, result any) error {
@@ -148,6 +179,9 @@ func (c *botClient) request(ctx context.Context, method, contentType string, bod
 	}
 	if envelope.OK == nil {
 		return errors.New("telegram response has no ok field")
+	}
+	if raw, ok := result.(*json.RawMessage); ok {
+		*raw = envelope.Result
 	}
 	if !*envelope.OK {
 		status := response.StatusCode
