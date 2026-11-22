@@ -3,7 +3,7 @@
 [![Go component](https://github.com/AlonaBot/alonabot-adapter-telegram/actions/workflows/ci.yml/badge.svg)](https://github.com/AlonaBot/alonabot-adapter-telegram/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Telegram Adapter通过 AlonaBot SDK 与 Core 通信，独立安装、升级和替换。组件版本为 `0.1.0`。
+Telegram Adapter通过 AlonaBot SDK 与 Core 通信，独立安装、升级和替换。组件版本为 `0.2.0`。
 ## 开发
 
 需要 Go 1.27.1。SDK 版本固定在 `go.mod`；GORM 使用上游正式版本。
@@ -95,4 +95,4 @@ _, err := action.PinChatMessage(c, c.Event().Ref(), action.PinChatMessageParams{
 
 自动转手动时，Core 排空在途写入，按 `clear_commands_on_disable` 清理后通知 ready；清理失败保留错误，显式 Sync 可重处理。`clear=false` 保留菜单至插件接管，首次手动启动及手动重启保留菜单。机器人离群停用目标，重入后重建。通过外部工具写过的历史 scope 需要明确指定位置后清理。
 
-本次功能使用尚待发布的 Core SDK 接口。与 Core 开发树联编时使用仓库外临时 `go.work` 或 modfile；Core 发布后再更新产品 `go.mod` 的实际版本。
+分域命令菜单需要 Core v0.2.0；SDK 与打包器固定到 `go.mod` 中已审查的 Core 精确提交。
