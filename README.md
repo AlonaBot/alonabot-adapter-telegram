@@ -96,11 +96,3 @@ _, err := action.PinChatMessage(c, c.Event().Ref(), action.PinChatMessageParams{
 自动转手动时，Core 排空在途写入，按 `clear_commands_on_disable` 清理后通知 ready；清理失败保留错误，显式 Sync 可重处理。`clear=false` 保留菜单至插件接管，首次手动启动及手动重启保留菜单。机器人离群停用目标，重入后重建。通过外部工具写过的历史 scope 需要明确指定位置后清理。
 
 分域命令菜单需要 Core v0.2.0；SDK 与打包器固定到 `go.mod` 中已审查的 Core 精确提交。
-
-## 新 SDK 联调与升级
-
-Adapter 实例 Schema 保持 `adapter_config_schema.json`。Go 源文件名自由，包级 `New` 保持现行签名。旧 `config_schema.json` 须改名并用新 SDK 重建。升级先停用旧组件、升级 Core，再更新组件包并启用；配置值与用户数据保留。
-
-新 SDK 发布前，通过本机临时 `go.work` 同时 `use` Core 和本组件 worktree，执行 `go test`、`go build` 和本地 Core CLI 的 `check`。`pack` 会使用临时 modfile，需在独立临时源码副本中添加指向本地 Core 的 `replace`，设置 `GOWORK=off` 后打包；保留原 worktree 的 `go.mod`。正式发行前将 `go.mod` 中 SDK 固定到真实发布版本，重新构建五平台归档，组件发布后再更新 Core 的 `components.lock.json`。
-
-For local integration before the SDK release, use a temporary `go.work` containing Core and this component, then run Go checks and the locally built Core CLI's `check`. For `pack`, add a local Core `replace` in a disposable source copy and set `GOWORK=off`, preserving the original worktree's module declarations. Pin the published SDK before releasing rebuilt packages. Disable the old component, upgrade Core, update the component package, then enable it; configuration values and user data are retained. Adapter instance Schemas keep `adapter_config_schema.json`; plugin and Agent Schemas use `plugin_config_schema.json`.
