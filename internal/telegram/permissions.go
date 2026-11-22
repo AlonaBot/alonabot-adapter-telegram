@@ -25,8 +25,10 @@ type administratorCache struct {
 	members   []chatMember
 }
 
-// addPlatformPermissions 在 normalize 成功后调用；缓存只由接收循环读写。
+// addPlatformPermissions 与成员管理动作串行访问管理员缓存。
 func (i *instance) addPlatformPermissions(ctx context.Context, raw json.RawMessage, events []*msg.Event) error {
+	i.administratorsMu.Lock()
+	defer i.administratorsMu.Unlock()
 	var update struct {
 		Message       *telegramMessage       `json:"message"`
 		EditedMessage *telegramMessage       `json:"edited_message"`

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/AlonaBot/AlonaBot/sdk"
 	"github.com/AlonaBot/AlonaBot/sdk/errcode"
@@ -23,6 +24,13 @@ type telegramFile struct {
 	Filename *string `json:"file_name"`
 	Width    uint64  `json:"width"`
 	Height   uint64  `json:"height"`
+	Duration uint64  `json:"duration"`
+}
+
+type telegramSticker struct {
+	telegramFile
+	IsAnimated bool `json:"is_animated"`
+	IsVideo    bool `json:"is_video"`
 }
 
 func (m *telegramMessage) mediaSegment() msg.Segment {
@@ -40,6 +48,10 @@ func (m *telegramMessage) mediaSegment() msg.Segment {
 		file = m.Video
 	case m.Animation != nil:
 		file = m.Animation
+	case m.VideoNote != nil:
+		file = m.VideoNote
+	case m.Sticker != nil && !m.Sticker.IsAnimated && !m.Sticker.IsVideo:
+		file = &m.Sticker.telegramFile
 	case m.Document != nil:
 		file = m.Document
 	case m.Audio != nil:
@@ -52,10 +64,12 @@ func (m *telegramMessage) mediaSegment() msg.Segment {
 	incoming := &msg.IncomingMedia{Token: file.ID, Size: deref(file.Size), MIME: deref(file.MIME)}
 	source := incoming.Source()
 	switch {
-	case len(m.Photo) > 0:
+	case len(m.Photo) > 0 || m.Sticker != nil:
 		return msg.ImageSegment{Source: source, Caption: deref(m.Caption)}
-	case m.Video != nil || m.Animation != nil:
-		return msg.VideoSegment{Source: source, Caption: deref(m.Caption)}
+	case m.Video != nil || m.Animation != nil || m.VideoNote != nil:
+		return msg.VideoSegment{Source: source, Caption: deref(m.Caption), Duration: time.Duration(file.Duration) * time.Second}
+	case m.Voice != nil:
+		return msg.VoiceSegment{Source: source, Caption: deref(m.Caption), Duration: time.Duration(file.Duration) * time.Second}
 	default:
 		return msg.FileSegment{Source: source, Filename: deref(file.Filename), MIME: deref(file.MIME), Caption: deref(m.Caption)}
 	}

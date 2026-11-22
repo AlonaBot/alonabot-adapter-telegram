@@ -183,11 +183,18 @@ func renderButtons(buttons msg.ButtonsSegment) (map[string]any, *errcode.Error) 
 		}
 		rendered := make([]map[string]any, 0, len(row))
 		for _, button := range row {
-			if len(button.CoreToken) == 0 || len(button.CoreToken) > maxCallbackBytes {
-				return nil, invalidPlan("button core_token must contain 1 to 64 bytes")
-			}
 			if button.Label == "" {
 				return nil, invalidPlan("button label must not be empty")
+			}
+			if button.URL != "" {
+				if button.CoreToken != "" {
+					return nil, invalidPlan("URL button must not include core_token")
+				}
+				rendered = append(rendered, map[string]any{"text": button.Label, "url": button.URL})
+				continue
+			}
+			if len(button.CoreToken) == 0 || len(button.CoreToken) > maxCallbackBytes {
+				return nil, invalidPlan("button core_token must contain 1 to 64 bytes")
 			}
 			rendered = append(rendered, map[string]any{"text": button.Label, "callback_data": button.CoreToken})
 		}

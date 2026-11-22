@@ -20,8 +20,11 @@ type telegramUser struct {
 }
 
 type telegramChat struct {
-	ID   int64  `json:"id"`
-	Type string `json:"type"`
+	ID        int64  `json:"id"`
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
 }
 
 type telegramEntity struct {
@@ -53,6 +56,8 @@ type telegramMessage struct {
 	Animation       *telegramFile    `json:"animation"`
 	Audio           *telegramFile    `json:"audio"`
 	Voice           *telegramFile    `json:"voice"`
+	VideoNote       *telegramFile    `json:"video_note"`
+	Sticker         *telegramSticker `json:"sticker"`
 }
 
 type chatMember struct {
@@ -135,6 +140,26 @@ func (i *instance) normalize(raw json.RawMessage) ([]*msg.Event, error) {
 		edited = received != nil
 	}
 	if received != nil {
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return nil, err
+		}
+		for _, field := range []string{"message", "channel_post", "edited_message", "edited_channel_post"} {
+			if body, ok := envelope[field]; ok && string(body) != "null" {
+				event, service, err := i.serviceEvent(received, body)
+				if err != nil {
+					return nil, err
+				}
+				if service {
+					if event == nil {
+						return nil, nil
+					}
+					i.source(event, update.ID, raw)
+					return []*msg.Event{event}, nil
+				}
+				break
+			}
+		}
 		event, err := i.messageEvent(received, edited)
 		if err != nil {
 			return nil, err
@@ -198,7 +223,11 @@ func (i *instance) baseEvent(chat telegramChat, date int64, user *telegramUser) 
 	case "channel":
 		chatType = msg.ChatChannel
 	}
-	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.SID(AdapterID, strconv.FormatInt(chat.ID, 10), ""), ChatType: chatType, OccurredAt: occurred, Actor: i.actor(user)}
+	title := chat.Title
+	if chat.Type == "private" {
+		title = strings.TrimSpace(chat.FirstName + " " + chat.LastName)
+	}
+	return &msg.Event{AdapterID: AdapterID, AdapterInstanceID: i.id, AccountID: i.account.ID, Session: msg.SID(AdapterID, strconv.FormatInt(chat.ID, 10), ""), ChatType: chatType, ChatTitle: title, OccurredAt: occurred, Actor: i.actor(user)}
 }
 
 func (*instance) source(event *msg.Event, id int64, raw json.RawMessage) {
