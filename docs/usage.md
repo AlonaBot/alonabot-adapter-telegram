@@ -7,6 +7,7 @@ Use Core v0.2.0 or later. After installation, add a Telegram account in Core. [a
 ## Instance configuration
 
 Set `token` to send and receive messages through long polling. `api_base_url` defaults to the public Telegram service.
+When adding an account in WebUI, **Account settings** verifies the Bot Token and shows the bot's name and username before you save.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |

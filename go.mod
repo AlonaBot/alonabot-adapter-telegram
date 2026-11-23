@@ -4,7 +4,7 @@ go 1.27.1
 
 tool google.golang.org/protobuf/cmd/protoc-gen-go
 
-require github.com/AlonaBot/AlonaBot v0.2.1-0.20261123084812-a423fe787cf9
+require github.com/AlonaBot/AlonaBot v0.2.1-0.20261123100550-f4cc3fca5300
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect

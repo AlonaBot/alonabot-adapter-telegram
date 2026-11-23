@@ -48,11 +48,12 @@ func platformCapabilities() []msg.Capability {
 }
 
 // Descriptor 声明本 Adapter 的接收、发送、编辑能力与会话平台权限。
-func (*telegramAdapter) Descriptor() *adapter.Descriptor {
+func (a *telegramAdapter) Descriptor() *adapter.Descriptor {
 	return &adapter.Descriptor{
 		AdapterID: AdapterID, Capabilities: platformCapabilities(),
 		Events:  eventDeclarations(),
 		Actions: actionDeclarations(),
+		HTTP:    a.accountRoutes(),
 		Permissions: []adapter.PermissionDeclaration{
 			{Name: perm.ChatOwner, Implies: []string{perm.ChatAdmin}, LabelKey: "permission.chat_owner"},
 			{Name: perm.ChatAdmin, Implies: []string{"chat_admin"}, LabelKey: "permission.chat_admin"},
@@ -126,16 +127,9 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 		}
 	}()
 	// 2. 验证账号与 webhook；启动失败时释放实例槽。
-	var me struct {
-		ID        int64  `json:"id"`
-		Username  string `json:"username"`
-		FirstName string `json:"first_name"`
-	}
-	if err := client.call(ctx, "getMe", struct{}{}, &me); err != nil {
+	me, err := client.getMe(ctx)
+	if err != nil {
 		return nil, startError(err)
-	}
-	if me.ID == 0 {
-		return nil, &sdk.Error{Code: errcode.Unavailable, Message: "telegram getMe returned no account ID"}
 	}
 	i.account = adapter.Account{ID: strconv.FormatInt(me.ID, 10), DisplayName: me.FirstName, Username: me.Username}
 	i.botID = me.ID
@@ -150,7 +144,9 @@ func (a *telegramAdapter) Start(ctx context.Context, request adapter.StartReques
 	}
 	// 3. Start 的 RPC 结束不取消实例；循环与 Stop 单独拥有其 context。
 	receiveContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	a.mu.Lock()
 	i.cancel = cancel
+	a.mu.Unlock()
 	started = true
 	go func() {
 		defer cancel()

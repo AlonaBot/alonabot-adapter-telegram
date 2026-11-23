@@ -1,0 +1,14 @@
+{
+  "messages": {
+    "account.title": "Bot token",
+    "account.token": "Bot Token",
+    "account.proxy_options": "Custom proxy",
+    "account.proxy": "Proxy URL (optional)",
+    "account.proxy_required": "Enter a custom proxy to verify this token.",
+    "account.verify": "Verify",
+    "account.use_token": "Use this Token",
+    "account.context_failed": "Could not open account settings.",
+    "account.verify_failed": "Could not verify the Bot Token.",
+    "account.submit_failed": "Could not apply the verified Token. Try again."
+  }
+}
