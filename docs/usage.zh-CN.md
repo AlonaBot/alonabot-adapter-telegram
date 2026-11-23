@@ -2,7 +2,7 @@
 
 [English](usage.md)
 
-使用 Core v0.2.0 或更高版本。安装后在 Core 添加 Telegram 账号，实例配置由 [adapter_config_schema.json](../adapter_config_schema.json) 声明。
+使用 Core v0.3.0 或更高版本。安装后在 Core 添加 Telegram 账号，实例配置由 [adapter_config_schema.json](../adapter_config_schema.json) 声明。
 
 ## 实例配置
 
