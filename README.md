@@ -13,6 +13,7 @@ alonabot install --source AlonaBot/alonabot-adapter-telegram --yes
 ```
 
 Add a Telegram account in Core and configure its bot token.
+When adding an account in WebUI, open **Account settings** to verify the Bot Token before saving.
 
 ## Documentation
 

@@ -29,6 +29,7 @@ type botClient struct {
 	base     string
 	fileBase string
 	redact   *strings.Replacer
+	proxy    string
 }
 
 type apiError struct {
@@ -48,19 +49,30 @@ func newBotClient(token, base, proxyMode, proxy string) (*botClient, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	replacements := []string{token, "<redacted>", url.PathEscape(token), "<redacted>"}
+	var proxyURL *url.URL
+	var customProxy string
 	switch proxyMode {
 	case proxyModeNone:
 		transport.Proxy = nil
 	case proxyModeCore:
 		transport.Proxy = http.ProxyFromEnvironment
+		proxyURL, _ = http.ProxyFromEnvironment(&http.Request{URL: baseURL})
 	case proxyModeCustom:
 		if proxy == "" {
 			return nil, errors.New("invalid proxy")
 		}
-		proxyURL, err := url.Parse(proxy)
+		proxyURL, err = url.Parse(proxy)
 		if err != nil || proxyURL.Host == "" || (proxyURL.Scheme != "http" && proxyURL.Scheme != "https" && proxyURL.Scheme != "socks5") || proxyURL.RawQuery != "" || proxyURL.Fragment != "" {
 			return nil, errors.New("invalid proxy URL")
 		}
+		customProxy = proxy
+		replacements = append(replacements, proxy, "<redacted>")
+		transport.Proxy = http.ProxyURL(proxyURL)
+	default:
+		return nil, errors.New("invalid proxy_mode")
+	}
+	if proxyURL != nil {
+		replacements = append(replacements, proxyURL.String(), "<redacted>", proxyURL.Host, "<redacted>", proxyURL.Hostname(), "<redacted>")
 		if proxyURL.User != nil {
 			user := proxyURL.User.Username()
 			password, _ := proxyURL.User.Password()
@@ -70,9 +82,6 @@ func newBotClient(token, base, proxyMode, proxy string) (*botClient, error) {
 				}
 			}
 		}
-		transport.Proxy = http.ProxyURL(proxyURL)
-	default:
-		return nil, errors.New("invalid proxy_mode")
 	}
 	// 禁止跟随外部重定向，避免 Bot 凭证被传给新的 origin。
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -80,8 +89,25 @@ func newBotClient(token, base, proxyMode, proxy string) (*botClient, error) {
 	botPath := "bot" + url.PathEscape(token) + "/"
 	return &botClient{
 		http: client, base: base + "/" + botPath, fileBase: base + "/file/" + botPath,
-		redact: strings.NewReplacer(replacements...),
+		redact: strings.NewReplacer(replacements...), proxy: customProxy,
 	}, nil
+}
+
+type botIdentity struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+}
+
+func (c *botClient) getMe(ctx context.Context) (botIdentity, error) {
+	var me botIdentity
+	if err := c.call(ctx, "getMe", struct{}{}, &me); err != nil {
+		return botIdentity{}, err
+	}
+	if me.ID == 0 {
+		return botIdentity{}, errors.New("telegram getMe returned no account ID")
+	}
+	return me, nil
 }
 
 func (c *botClient) call(ctx context.Context, method string, request any, result any) error {

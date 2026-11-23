@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title></title>
+  <link rel="stylesheet" href="kit.css">
+</head>
+<body>
+  <form id="account" hidden>
+    <p>
+      <label class="ab-label" for="token" data-key="account.token"></label>
+      <input class="ab-input" id="token" type="password" required autocomplete="off" spellcheck="false">
+    </p>
+    <details id="proxy-options" hidden>
+      <summary data-key="account.proxy_options"></summary>
+      <p>
+        <label class="ab-label" for="proxy" data-key="account.proxy"></label>
+        <input class="ab-input" id="proxy" type="password" autocomplete="off" spellcheck="false">
+      </p>
+    </details>
+    <p>
+      <button class="ab-btn ab-btn-primary" id="verify" type="submit" data-key="account.verify"></button>
+      <button class="ab-btn ab-btn-soft" id="use-token" type="button" data-key="account.use_token" disabled></button>
+    </p>
+  </form>
+  <p id="status" role="status" style="overflow-wrap: anywhere"></p>
+  <script src="kit.js"></script>
+  <script>
+    const form = document.getElementById('account');
+    const token = document.getElementById('token');
+    const proxy = document.getElementById('proxy');
+    const proxyOptions = document.getElementById('proxy-options');
+    const verify = document.getElementById('verify');
+    const useToken = document.getElementById('use-token');
+    const status = document.getElementById('status');
+    let context;
+    let verifiedPatch;
+
+    AlonaBot.onLocale(async (locale) => {
+      document.documentElement.lang = locale;
+      try {
+        document.title = await AlonaBot.t('account.title');
+        await Promise.all(Array.from(document.querySelectorAll('[data-key]'), async (element) => {
+          element.textContent = await AlonaBot.t(element.dataset.key);
+        }));
+      } catch {
+        status.textContent = 'Could not load account page translations.';
+      }
+    });
+
+    async function initialize() {
+      try {
+        context = await AlonaBot.getConfigContext();
+        if (context.config.proxy_mode === 'custom') {
+          proxyOptions.hidden = false;
+          proxyOptions.open = !context.config.proxy?.$secret_set;
+        }
+        form.hidden = false;
+      } catch {
+        status.textContent = await AlonaBot.t('account.context_failed');
+      }
+    }
+
+    function clearVerification() {
+      verifiedPatch = undefined;
+      useToken.disabled = true;
+      status.textContent = '';
+    }
+    form.addEventListener('input', clearVerification);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearVerification();
+      const patch = { token: token.value.trim() };
+      if (!patch.token) return;
+      if (context.config.proxy_mode === 'custom' && proxy.value.trim()) patch.proxy = proxy.value.trim();
+
+      verify.disabled = token.disabled = proxy.disabled = true;
+      try {
+        const result = await AlonaBot.request('POST', '/account/check', {
+          ...patch,
+          api_base_url: context.config.api_base_url,
+          proxy_mode: context.config.proxy_mode,
+          instance_id: context.mode === 'edit' ? context.instance_id : undefined
+        });
+        if (!result.ok) {
+          if (result.status === 409) {
+            proxyOptions.open = true;
+            status.textContent = await AlonaBot.t('account.proxy_required');
+          } else {
+            status.textContent = result.data?.error || await AlonaBot.t('account.verify_failed');
+          }
+          return;
+        }
+        const { first_name, username } = result.data;
+        status.textContent = username ? `${first_name} (@${username})` : first_name;
+        verifiedPatch = patch;
+        useToken.disabled = false;
+      } catch {
+        status.textContent = await AlonaBot.t('account.verify_failed');
+      } finally {
+        verify.disabled = token.disabled = proxy.disabled = false;
+      }
+    });
+
+    useToken.addEventListener('click', async () => {
+      verify.disabled = token.disabled = proxy.disabled = useToken.disabled = true;
+      try {
+        await AlonaBot.completeConfig({ patch: verifiedPatch });
+      } catch {
+        status.textContent = await AlonaBot.t('account.submit_failed');
+        verify.disabled = token.disabled = proxy.disabled = useToken.disabled = false;
+      }
+    });
+
+    initialize();
+  </script>
+</body>
+</html>

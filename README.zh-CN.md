@@ -13,6 +13,7 @@ alonabot install --source AlonaBot/alonabot-adapter-telegram --yes
 ```
 
 在 Core 添加 Telegram 账号并配置 Bot Token。
+在 WebUI 添加账号时，可打开「账号设置」验证 Bot Token，再保存账号。
 
 ## 文档
 

@@ -7,6 +7,7 @@
 ## 实例配置
 
 配置 `token` 后即可使用 long polling 收发消息；`api_base_url` 缺省为 Telegram 公共服务地址。
+在 WebUI 添加账号时，可在「账号设置」中验证 Bot Token，查看机器人名称和用户名后再保存。
 
 | 配置 | 缺省值 | 用途 |
 | --- | --- | --- |

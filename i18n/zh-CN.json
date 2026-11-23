@@ -1,0 +1,17 @@
+{
+  "pages": {
+    "/account/": "账号设置"
+  },
+  "messages": {
+    "account.title": "账号设置",
+    "account.token": "Bot Token",
+    "account.proxy_options": "自定义代理",
+    "account.proxy": "代理地址（可选）",
+    "account.proxy_required": "请填写自定义代理地址后再验证 Token。",
+    "account.verify": "验证",
+    "account.use_token": "使用此 Token",
+    "account.context_failed": "无法打开账号设置。",
+    "account.verify_failed": "无法验证 Bot Token。",
+    "account.submit_failed": "无法应用已验证的 Token，请重试。"
+  }
+}
