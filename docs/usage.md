@@ -2,7 +2,7 @@
 
 [简体中文](usage.zh-CN.md)
 
-Use Core v0.2.0 or later. After installation, add a Telegram account in Core. [adapter_config_schema.json](../adapter_config_schema.json) defines instance settings.
+Use Core v0.3.0 or later. After installation, add a Telegram account in Core. [adapter_config_schema.json](../adapter_config_schema.json) defines instance settings.
 
 ## Instance configuration
 

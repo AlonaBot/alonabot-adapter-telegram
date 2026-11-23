@@ -6,7 +6,7 @@ Connect Telegram bots through long polling, with media, typed actions and events
 
 ## Quick start
 
-Use Core v0.2.0 or later. On the machine running Core:
+Use Core v0.3.0 or later. On the machine running Core:
 
 ```fish
 alonabot install --source AlonaBot/alonabot-adapter-telegram --yes
