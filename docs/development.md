@@ -39,4 +39,4 @@ For documentation and GitHub metadata, check the changed links, YAML and scripts
 - `plugin.yaml`: component identity and packaging
 - `action/`, `event/`, `perm/`, `telegramtest/`: typed platform API, permissions, and local Bot API simulator
 
-[Core development](https://github.com/AlonaBot/AlonaBot/blob/main/docs/development.md) · [Core plugin guide](https://github.com/AlonaBot/AlonaBot/blob/main/docs/plugin-guide.md)
+[Core development](https://github.com/AlonaBot/AlonaBot/blob/main/docs/development.md) · [Component developer docs](https://alonabot.github.io/en/docs/tutorial/project)
