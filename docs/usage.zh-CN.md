@@ -25,6 +25,22 @@ API 与文件下载共用实例代理；文件根地址与 API 根地址均支�
 
 图片、视频、文件和语音支持 `https_url`、`platform_file`、`inline_base64` 与 `media_ref`。引用上传边读取 Core 的媒体块边写 multipart，取消与读取错误会保留到发送回执。语音单独发送；可信 MIME 为 `image/gif` 的图片引用和 `GIF8` 开头的内联图片使用动画发送，均切断连续相册，上传文件名带 `.gif`，类型为 `image/gif`。其他上传沿用来源 MIME 和文件原名，未知 MIME 使用 `application/octet-stream`。HTTPS 图片 URL 原样交给 Telegram。
 
+### 富消息格式与组合
+
+出站描述声明支持 `text`、`markdown`、`image`、`video`、`voice`、`file`、`mention`、`quote`、`buttons`，`forward` 为 `unsupported`。文本与相邻提及合并后最多 4096 个 UTF-16 码元，媒体 caption 最多 1024 个 UTF-16 码元。按钮 label 须非空并完整保留；描述未声明 label 长度上限。回调 token 的 64 字节限制由发送时校验。
+
+- `telegram.album`：连续图片和视频按最多 10 项分组，单项单独发送；GIF 动画和语音切断相册。
+- `telegram.reply_first`：一条逻辑消息最多一个引用，归首次物理投递，引用须属于同一聊天。
+- `telegram.buttons_last`：一条逻辑消息最多一个键盘，归末次物理投递；末次相册需要追加承载按钮的正文。
+
+Agent 的 `send_message` 可按“相册 → 正文 → 按钮”编排：
+
+```json
+{"parts":[{"type":"image","source":{"https_url":"https://example.com/first.jpg"}},{"type":"image","source":{"https_url":"https://example.com/second.jpg"}},{"type":"text","text":"请选择"},{"type":"buttons","rows":[[{"label":"继续"}]]}]}
+```
+
+本开发候选需要提供 `DescribeMessage`、`CheckMessage` 的 Core/SDK。只读预检复用真实发送的分组与校验，接受尚未签发 token 的选项按钮。Core 为 `media_ref` 与 `incoming` 填充可信 MIME；决定动画或相册的 MIME 尚未确定时返回 `unknown`。明确违反组合规则时返回 `unsupported` 和带规则名的错误；确定可用时返回 `supported`。预检期间没有媒体取件或平台请求，最终发送保留实际投递结果与错误。
+
 入站 voice 映射为语音，audio 保持文件，animation/video_note 映射为视频，静态 sticker 映射为图片。动画和视频 sticker 保留在原始平台载荷中。群与频道标题、私聊姓名直接填入 `chat_title`。
 
 使用 `message.URLButton("Open", "https://example.com")` 添加链接按钮；回调按钮继续使用 Core 签发的 token。支持文本编辑和撤回，撤回按输入顺序每批最多 100 个 ID；失败或结果未知后保留后续未尝试回执。
@@ -63,6 +79,5 @@ _, err := action.PinChatMessage(c, c.Event().Ref(), action.PinChatMessageParams{
 自动转手动时，Core 排空在途写入，按 `clear_commands_on_disable` 清理后通知 ready；清理失败保留错误，显式 Sync 可重处理。`clear=false` 保留菜单至插件接管，首次手动启动及手动重启保留菜单。机器人离群停用目标，重入后重建。通过外部工具写过的历史 scope 需要明确指定位置后清理。
 
 分域命令菜单需要 Core v0.2.0；SDK 与打包器固定到 `go.mod` 中已审查的 Core 精确提交。
-
 
 Adapter 实现 `adapter.CommandMenuController`；`SetCommandMenu`、`GetCommandMenu`、`DeleteCommandMenu` 执行平台请求，Core 管理模式、所有权和串行写入。协议与公开包入口见[开发指南](development.zh-CN.md)。

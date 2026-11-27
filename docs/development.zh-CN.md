@@ -32,6 +32,14 @@ alonabot check .
 
 文档和 GitHub 元数据检查改动链接、YAML、脚本及 `git diff --check`。CI 的 Repository 比较事件 base SHA 与 HEAD；纯文档改动跳过 Go 检查。PR 记录实际命令、平台、失败与未运行项。
 
+## 出站描述与只读预检
+
+`internal/telegram/formats.go` 从 `sdk/message.StandardFormats()` 补充状态、来源、限制与组合规则，`Descriptor.Formats` 和 `Descriptor.Combinations` 随注册提供给 Core。本仓当前没有出站消息扩展声明；平台动作和扩展事件维持各自入口。
+
+实例实现可选的 `adapter.MessageChecker`。`plan.go` 的 `planTopology` 负责目标、引用、键盘位置与连续媒体分组，`CheckMessage` 与 `Send` 共用；文本、caption、来源和标签校验同样复用。预检读取 Core 已授权的原始 `MediaRef`/`Incoming` 及可信 MIME，接受未签发的选项按钮，不进入上传或最终按钮渲染。Core 在调用前将通用 Markdown 转为文本实体。
+
+本地跨仓联编把专用 `go.work` 放在已忽略的 `tmp/`，每条命令显式设置绝对 `GOWORK`，指向本仓及对应 Core checkout。工作区文件和本地路径留在本机，远端验证使用 `go.mod` 固定的精确 SDK。开发候选为 `0.4.0-dev.0`，双语日志位于 `changelog/0.4.0-dev.0/`，标题标注 Unreleased；正式版本历史保留。
+
 ## 源码导航
 
 - `telegram.go`: 公开构造入口

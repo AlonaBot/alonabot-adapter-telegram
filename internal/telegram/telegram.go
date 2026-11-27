@@ -51,6 +51,7 @@ func platformCapabilities() []msg.Capability {
 func (a *telegramAdapter) Descriptor() *adapter.Descriptor {
 	return &adapter.Descriptor{
 		AdapterID: AdapterID, Capabilities: platformCapabilities(),
+		Formats: messageFormats(), Combinations: combinationRules(),
 		Events:  eventDeclarations(),
 		Actions: actionDeclarations(),
 		HTTP:    a.accountRoutes(),
