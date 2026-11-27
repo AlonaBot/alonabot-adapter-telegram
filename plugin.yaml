@@ -1,6 +1,6 @@
 id: alonabot-adapter-telegram
 name: Telegram
-version: 0.3.0
+version: 0.4.0-dev.0
 author: AlonaBot
 role: adapter
 adapter_id: telegram

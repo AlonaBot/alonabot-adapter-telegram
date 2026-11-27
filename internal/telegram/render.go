@@ -172,24 +172,35 @@ func renderText(segments msg.Chain) (map[string]any, *errcode.Error) {
 	return result, nil
 }
 
-func renderButtons(buttons msg.ButtonsSegment) (map[string]any, *errcode.Error) {
+func checkButtons(buttons msg.ButtonsSegment) *errcode.Error {
 	if len(buttons.Rows) == 0 {
-		return nil, invalidPlan("buttons require rows")
+		return invalidPlan("buttons require rows")
+	}
+	for _, row := range buttons.Rows {
+		if len(row) == 0 {
+			return invalidPlan("button row must not be empty")
+		}
+		for _, button := range row {
+			if button.Label == "" {
+				return invalidPlan("button label must not be empty")
+			}
+			if button.URL != "" && button.CoreToken != "" {
+				return invalidPlan("URL button must not include core_token")
+			}
+		}
+	}
+	return nil
+}
+
+func renderButtons(buttons msg.ButtonsSegment) (map[string]any, *errcode.Error) {
+	if err := checkButtons(buttons); err != nil {
+		return nil, err
 	}
 	rows := make([][]map[string]any, 0, len(buttons.Rows))
 	for _, row := range buttons.Rows {
-		if len(row) == 0 {
-			return nil, invalidPlan("button row must not be empty")
-		}
 		rendered := make([]map[string]any, 0, len(row))
 		for _, button := range row {
-			if button.Label == "" {
-				return nil, invalidPlan("button label must not be empty")
-			}
 			if button.URL != "" {
-				if button.CoreToken != "" {
-					return nil, invalidPlan("URL button must not include core_token")
-				}
 				rendered = append(rendered, map[string]any{"text": button.Label, "url": button.URL})
 				continue
 			}

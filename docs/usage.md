@@ -25,6 +25,22 @@ API calls and file downloads share the instance proxy. Both API and file roots s
 
 Images, videos, files, and voice accept `https_url`, `platform_file`, `inline_base64`, and `media_ref`. Referenced uploads read Core media chunks directly into multipart requests; cancellation and read errors remain in send receipts. Voice is sent separately. Image references with trusted MIME `image/gif`, and inline images starting with `GIF8`, are sent as animations. Both break continuous albums, use a `.gif` upload name and MIME `image/gif`. Other uploads retain their source MIME and filename; unknown MIME uses `application/octet-stream`. HTTPS image URLs pass directly to Telegram.
 
+### Rich message formats and combinations
+
+Outbound descriptions declare `text`, `markdown`, `image`, `video`, `voice`, `file`, `mention`, `quote`, and `buttons` supported; `forward` is `unsupported`. Merged adjacent text and mentions allow up to 4096 UTF-16 code units; media captions allow 1024. Button labels must be nonempty and are preserved in full; no label length limit is declared. Sending validates the separate 64-byte callback token limit.
+
+- `telegram.album`: consecutive images and videos form groups of at most 10; single items are sent separately. GIF animations and voice break albums.
+- `telegram.reply_first`: a logical message allows one quote, applied to the first physical delivery and referring to the same chat.
+- `telegram.buttons_last`: a logical message allows one keyboard, applied to the last physical delivery. Add text to carry buttons after a final album.
+
+The Agent `send_message` tool accepts “album → text → buttons”:
+
+```json
+{"parts":[{"type":"image","source":{"https_url":"https://example.com/first.jpg"}},{"type":"image","source":{"https_url":"https://example.com/second.jpg"}},{"type":"text","text":"Choose an option"},{"type":"buttons","rows":[[{"label":"Continue"}]]}]}
+```
+
+This development candidate requires Core/SDK with `DescribeMessage` and `CheckMessage`. Read-only checks share grouping and validation with real sends and accept choice buttons before tokens are issued. Core supplies trusted MIME for `media_ref` and `incoming`; missing MIME that determines animation or album topology returns `unknown`. Definite rule violations return `unsupported` with the rule name; determined valid combinations return `supported`. Checking performs no media retrieval or platform requests. Final sends preserve actual delivery results and errors.
+
 Inbound voice becomes a voice segment, audio remains a file, animation/video_note become video, and static stickers become images. Animated and video stickers remain in the raw platform payload. Group/channel titles and private-chat names populate `chat_title`.
 
 Use `message.URLButton("Open", "https://example.com")` for URL buttons. Callback buttons use Core-issued tokens. Text editing and deletion are supported. Deletion follows input order in batches of at most 100 IDs; after a failure or unknown outcome, later receipts remain unattempted.

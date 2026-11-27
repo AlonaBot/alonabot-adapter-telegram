@@ -32,6 +32,14 @@ This repository has no `go:generate` entry; edit the owned resources directly.
 
 For documentation and GitHub metadata, check the changed links, YAML and scripts, plus `git diff --check`. In CI, Repository compares the event base SHA with HEAD; docs-only changes skip Go checks. Record actual commands, platform, failures, and unrun checks in the PR.
 
+## Outbound descriptions and read-only checks
+
+`internal/telegram/formats.go` augments `sdk/message.StandardFormats()` with status, sources, limits, and combination rules. `Descriptor.Formats` and `Descriptor.Combinations` reach Core through registration. This repository currently declares no outbound message extensions; platform actions and extension events retain their own entry points.
+
+Instances implement the optional `adapter.MessageChecker`. `planTopology` in `plan.go` owns target, quote, keyboard placement, and consecutive media grouping, shared by `CheckMessage` and `Send`. Text, caption, source, and label validation is also shared. Checking reads the original Core-authorized `MediaRef`/`Incoming` with trusted MIME, accepts unsigned choice buttons, and avoids upload and final button rendering. Core converts generic Markdown to text entities before calling the adapter.
+
+For local cross-repository builds, keep a dedicated `go.work` under ignored `tmp/` and explicitly set an absolute `GOWORK` for every command, selecting this repository and the corresponding Core checkout. Workspace files and local paths stay local; remote validation uses the exact SDK pinned in `go.mod`. The development candidate is `0.4.0-dev.0`, with bilingual notes under `changelog/0.4.0-dev.0/` headed Unreleased. Existing release history is preserved.
+
 ## Source map
 
 - `telegram.go`: public construction entry
